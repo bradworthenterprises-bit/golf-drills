@@ -46,6 +46,36 @@ const TEMPLATES = {
 }
 
 const STORAGE_KEY = "gdt_drills_v1"
+const MC_API = import.meta.env.VITE_MC_API_URL || ""
+
+const TEMPLATE_TO_CATEGORY = {
+  distance_matrix: "Wedges",
+  arc_depth: "Full swing",
+  shot_shaping: "Full swing",
+  putting_ladder: "Putting",
+  four_footer: "Putting",
+  strike_log: "Full swing",
+}
+
+function syncToMC(drill, sessionObj) {
+  if (!MC_API) return
+  const sourceId = `drill_app_${drill.template}_${sessionObj.id}`
+  fetch(`${MC_API}/golf/practice`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      date: new Date(sessionObj.timestamp).toISOString().slice(0, 10),
+      category: TEMPLATE_TO_CATEGORY[drill.template],
+      drill: TEMPLATES[drill.template].name,
+      duration_min: null,
+      result_json: sessionObj.data,
+      notes: sessionObj.notes || null,
+      source: "drill_app",
+      source_id: sourceId,
+      template: drill.template,
+    })
+  }).catch(err => console.warn("MC sync failed:", err))
+}
 
 // ── Helpers ──
 function shuffle(arr) {
@@ -210,9 +240,60 @@ export default function App() {
     updateDrills(prev => prev.map(d =>
       d.id === drill.id ? { ...d, sessions: [...d.sessions, sessionObj] } : d
     ))
+    syncToMC(drill, sessionObj)
     goHome()
   }
 
+  // ── Deep-link: auto-start drill from URL param ──
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const drillParam = params.get("drill")
+    if (drillParam && drills.length > 0) {
+      const target = drills.find(d => d.template === drillParam)
+      if (target) {
+        startSession(target)
+        // Clean up URL without reload
+        window.history.replaceState({}, "", window.location.pathname)
+      }
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Sync all history to MC ──
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState(null)
+
+  const syncAllToMC = async () => {
+    if (!MC_API) { setSyncResult("No MC API URL configured"); return }
+    setSyncing(true)
+    setSyncResult(null)
+    let count = 0
+    for (const drill of drills) {
+      for (const session of drill.sessions) {
+        try {
+          await fetch(`${MC_API}/golf/practice`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              date: new Date(session.timestamp).toISOString().slice(0, 10),
+              category: TEMPLATE_TO_CATEGORY[drill.template],
+              drill: TEMPLATES[drill.template].name,
+              duration_min: null,
+              result_json: session.data,
+              notes: session.notes || null,
+              source: "drill_app",
+              source_id: `drill_app_${drill.template}_${session.id}`,
+              template: drill.template,
+            })
+          })
+          count++
+        } catch (err) {
+          console.warn("Sync failed for session:", session.id, err)
+        }
+      }
+    }
+    setSyncing(false)
+    setSyncResult(`Synced ${count} sessions to Mission Control`)
+  }
 
   // ── Header ──
   const Header = ({ title, onBack, backLabel }) => (
@@ -1154,6 +1235,18 @@ export default function App() {
     return (
       <div>
         <Header title="My Drills" />
+        {MC_API && (
+          <div style={{ ...CARD, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 12, color: "#999", fontWeight: 500 }}>Mission Control</div>
+              {syncResult && <div style={{ fontSize: 11, color: GREEN_LIGHT, marginTop: 2 }}>{syncResult}</div>}
+            </div>
+            <button onClick={syncAllToMC} disabled={syncing}
+              style={{ ...BTN_BASE, background: syncing ? "#333" : "#1c1c1c", color: syncing ? "#666" : GREEN_LIGHT, border: `1px solid ${syncing ? "#333" : GREEN}`, fontSize: 12, padding: "8px 14px" }}>
+              {syncing ? "Syncing..." : "Sync History"}
+            </button>
+          </div>
+        )}
         {drills.map(drill => {
           const t = TEMPLATES[drill.template]
           return (
