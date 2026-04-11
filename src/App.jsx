@@ -1,17 +1,17 @@
 import { useState, useEffect, useCallback } from 'react'
 
 // ── Style Tokens ──
-const GREEN = "#4a9e6a", GREEN_LIGHT = "#4ade80", GREEN_DIM = "#1a2e22"
-const CARD_BG = "#161616", CARD_BORDER = "#1e1e1e"
+const GREEN = "#50b878", GREEN_LIGHT = "#5eeb96", GREEN_DIM = "#1a2e22"
+const CARD_BG = "#1a1a1a", CARD_BORDER = "#444"
 
 const INP = {
-  background: "#1c1c1c", border: "1px solid #2a2a2a", borderRadius: 8,
-  color: "#e0e0e0", padding: "11px 13px", fontSize: 15,
+  background: "#2a2a2a", border: "1px solid #888", borderRadius: 8,
+  color: "#fff", padding: "11px 13px", fontSize: 15,
   width: "100%", outline: "none", fontFamily: "'DM Sans', sans-serif",
   boxSizing: "border-box", WebkitAppearance: "none"
 }
 const LBL = {
-  fontSize: 10, color: "#555", textTransform: "uppercase",
+  fontSize: 10, color: "#ddd", textTransform: "uppercase",
   letterSpacing: "0.12em", marginBottom: 5, display: "block"
 }
 const CARD = {
@@ -35,6 +35,10 @@ const ARC_DEPTH_SEQUENCE = [
 const CLUBS = ["PW","GW","SW","LW","9i","8i","7i","6i","5i","4i","3i","4h","3h","3w","Driver"]
 const LOCATIONS = ["Basement","Range","Course","Simulator"]
 const STRIKE_GRADES = [1,2,3,4,5]
+const SHOT_SHAPES = ["Hook","Draw","Straight","Fade","Slice"]
+const PUTT_BREAKS = ["Left to Right","Straight","Right to Left"]
+const LAG_SLOPES = ["Uphill","Flat","Downhill"]
+const LAG_RESULTS = ["Short","Even","Long"]
 
 const TEMPLATES = {
   distance_matrix: { icon: "🎯", name: "Wedge Distance Matrix", desc: "Track miss distances for 20 random wedge targets" },
@@ -42,7 +46,12 @@ const TEMPLATES = {
   shot_shaping: { icon: "🔀", name: "Shot Shaping", desc: "Track path and spin direction over 20 shots" },
   putting_ladder: { icon: "🕳️", name: "Putting Ladder", desc: "Log putts and total distance for ladder drills" },
   four_footer: { icon: "⛳", name: "4-Footer Drill", desc: "Track makes out of 10 from 4 feet" },
-  strike_log: { icon: "📍", name: "Strike Log", desc: "Grade strike quality rep by rep" }
+  strike_log: { icon: "📍", name: "Strike Log", desc: "Grade strike quality rep by rep" },
+  driver_uprights: { icon: "🥅", name: "Driver Uprights", desc: "Track fairway hits and shot shape over 20 shots" },
+  start_line: { icon: "🎱", name: "Start Line", desc: "Track gate hits, line accuracy and break over 20 putts" },
+  lag: { icon: "📏", name: "Lag", desc: "Track lag putting distance control and miss patterns" },
+  shape_randomizer: { icon: "🎲", name: "Shape Randomizer", desc: "Randomized start and curve targets over 10 or 20 shots" },
+  toe_heel_strike: { icon: "🦶", name: "Toe/Heel Strike", desc: "Randomized strike location targets over 10 or 20 shots" }
 }
 
 const STORAGE_KEY = "gdt_drills_v1"
@@ -55,6 +64,11 @@ const TEMPLATE_TO_CATEGORY = {
   putting_ladder: "Putting",
   four_footer: "Putting",
   strike_log: "Full swing",
+  driver_uprights: "Full swing",
+  start_line: "Putting",
+  lag: "Putting",
+  shape_randomizer: "Full swing",
+  toe_heel_strike: "Full swing",
 }
 
 function syncToMC(drill, sessionObj) {
@@ -165,15 +179,68 @@ export default function App() {
   const [arcClub, setArcClub] = useState("PW")
   const [arcLocation, setArcLocation] = useState("Basement")
 
+  // ── Wake Lock: keep screen on ──
+  useEffect(() => {
+    let wakeLock = null
+    const requestWakeLock = async () => {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen')
+        }
+      } catch {}
+    }
+    requestWakeLock()
+    const onVisChange = () => { if (document.visibilityState === 'visible') requestWakeLock() }
+    document.addEventListener('visibilitychange', onVisChange)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisChange)
+      if (wakeLock) wakeLock.release().catch(() => {})
+    }
+  }, [])
+
   const persist = useCallback((d) => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)) } catch {}
   }, [])
 
   useEffect(() => { persist(drills) }, [drills, persist])
 
+  // ── Auto-persist session draft ──
+  const DRAFT_KEY = "gdt_draft_v1"
+  useEffect(() => {
+    if (view === "session" && sessionData !== null && activeDrill) {
+      try {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({
+          drillId: activeDrill.id, template: activeDrill.template,
+          sessionData, sessionNotes, cardStep, showSummary,
+          arcClub, arcLocation
+        }))
+      } catch {}
+    }
+  }, [view, sessionData, sessionNotes, cardStep, showSummary, activeDrill, arcClub, arcLocation])
+
+  // ── Restore draft on load ──
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY)
+      if (!raw) return
+      const draft = JSON.parse(raw)
+      const drill = drills.find(d => d.id === draft.drillId || d.template === draft.template)
+      if (!drill || !draft.sessionData) { localStorage.removeItem(DRAFT_KEY); return }
+      setActiveDrill(drill)
+      setSessionData(draft.sessionData)
+      setSessionNotes(draft.sessionNotes || "")
+      setCardStep(draft.cardStep || 0)
+      setShowSummary(draft.showSummary || false)
+      setArcClub(draft.arcClub || "PW")
+      setArcLocation(draft.arcLocation || "Basement")
+      setView("session")
+    } catch { localStorage.removeItem(DRAFT_KEY) }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   const updateDrills = (fn) => setDrills(prev => { const next = fn(prev); return next })
 
   const goHome = () => {
+    localStorage.removeItem(DRAFT_KEY)
     setView("home"); setActiveDrill(null); setSessionData(null)
     setSessionNotes(""); setCardStep(0); setShowSummary(false)
   }
@@ -204,6 +271,21 @@ export default function App() {
         break
       case "strike_log":
         setSessionData([])
+        break
+      case "driver_uprights":
+        setSessionData(Array(20).fill(null).map((_, i) => ({ shot: i, uprights: null, shape: null })))
+        break
+      case "start_line":
+        setSessionData(Array(20).fill(null).map((_, i) => ({ shot: i, gate: null, lineRight: null, break_dir: null })))
+        break
+      case "lag":
+        setSessionData({ count: null, putts: [] })
+        break
+      case "shape_randomizer":
+        setSessionData({ count: null, shots: [] })
+        break
+      case "toe_heel_strike":
+        setSessionData({ count: null, shots: [] })
         break
     }
     setView("session")
@@ -236,11 +318,29 @@ export default function App() {
       case "strike_log":
         sessionObj.data = sessionData
         break
+      case "driver_uprights":
+        sessionObj.data = sessionData
+        sessionObj.club = arcClub
+        sessionObj.location = arcLocation
+        break
+      case "start_line":
+        sessionObj.data = sessionData
+        break
+      case "lag":
+        sessionObj.data = sessionData
+        break
+      case "shape_randomizer":
+        sessionObj.data = sessionData
+        break
+      case "toe_heel_strike":
+        sessionObj.data = sessionData
+        break
     }
     updateDrills(prev => prev.map(d =>
       d.id === drill.id ? { ...d, sessions: [...d.sessions, sessionObj] } : d
     ))
     syncToMC(drill, sessionObj)
+    localStorage.removeItem(DRAFT_KEY)
     goHome()
   }
 
@@ -303,7 +403,7 @@ export default function App() {
           ⛳ Golf Practice
         </span>
         {onBack && (
-          <button onClick={onBack} style={{ ...BTN_BASE, background: "none", color: "#888", fontSize: 13, padding: "4px 0" }}>
+          <button onClick={onBack} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 0" }}>
             {backLabel || "← Back"}
           </button>
         )}
@@ -387,7 +487,7 @@ export default function App() {
           <Header title="Session Summary" onBack={() => setShowSummary(false)} backLabel="← Edit" />
           <div style={{ textAlign: "center", marginBottom: 20 }}>
             <div style={{ fontFamily: BARLOW, fontSize: 72, fontWeight: 700, color: GREEN_LIGHT }}>{liveScore}</div>
-            <div style={{ color: "#888", fontSize: 14 }}>out of {totalPossible} possible · {eff}%</div>
+            <div style={{ color: "#ddd", fontSize: 14 }}>out of {totalPossible} possible · {eff}%</div>
           </div>
           <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
             {[
@@ -397,7 +497,7 @@ export default function App() {
             ].map(s => (
               <div key={s.label} style={{ ...CARD, flex: 1, textAlign: "center" }}>
                 <div style={{ fontFamily: BARLOW, fontSize: 28, fontWeight: 700, color: s.color }}>{s.val}</div>
-                <div style={{ fontSize: 11, color: "#888" }}>{s.label}</div>
+                <div style={{ fontSize: 11, color: "#ddd" }}>{s.label}</div>
               </div>
             ))}
           </div>
@@ -410,7 +510,7 @@ export default function App() {
                   <div>
                     <span style={{ fontFamily: BARLOW, fontWeight: 600, fontSize: 18, color: "#fff" }}>{d.distance} yds</span>
                     {d.miss !== "" && (
-                      <span style={{ fontSize: 12, color: "#888", marginLeft: 8 }}>
+                      <span style={{ fontSize: 12, color: "#ddd", marginLeft: 8 }}>
                         {Number(d.miss) === 0 ? "Dead on" : `${d.miss} yds ${d.dir === "S" ? "short" : "long"}`}
                       </span>
                     )}
@@ -440,18 +540,18 @@ export default function App() {
             <span style={{ fontSize: 10, color: GREEN, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}>
               ⛳ Golf Practice
             </span>
-            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#888", fontSize: 13, padding: "4px 8px" }}>
+            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
               ← Back
             </button>
           </div>
           <div style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 24, color: GREEN_LIGHT }}>{liveScore}</div>
         </div>
         <h2 style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 22, color: "#fff", margin: "0 0 4px" }}>{activeDrill.name}</h2>
-        <div style={{ fontSize: 12, color: "#888", marginBottom: 12 }}>Shot {step + 1} of {data.length}</div>
+        <div style={{ fontSize: 12, color: "#ddd", marginBottom: 12 }}>Shot {step + 1} of {data.length}</div>
 
         <DotGrid items={data} current={step} onTap={setCardStep}
           colorFn={(d) => {
-            if (d.miss === "" || d.miss === null) return { bg: "#2a2a2a", label: "" }
+            if (d.miss === "" || d.miss === null) return { bg: "#444", label: "" }
             const p = calcPoints(d.miss, d.distance)
             return { bg: scoreColor(p) + "33", border: scoreColor(p), label: "", text: scoreColor(p) }
           }}
@@ -465,7 +565,7 @@ export default function App() {
           <div style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 90, color: "#fff", lineHeight: 1 }}>
             {current.distance}
           </div>
-          <div style={{ fontSize: 13, color: "#888", marginTop: 4 }}>yards</div>
+          <div style={{ fontSize: 13, color: "#ddd", marginTop: 4 }}>yards</div>
           {hasMiss && (
             <div style={{ marginTop: 10 }}>
               <span style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 36, color: sc }}>{pts}</span>
@@ -475,7 +575,7 @@ export default function App() {
         </div>
 
         {lastRef && (
-          <div style={{ ...CARD, background: "#111", padding: "8px 12px", fontSize: 12, color: "#666", marginBottom: 14 }}>
+          <div style={{ ...CARD, background: "#222", padding: "8px 12px", fontSize: 12, color: "#bbb", marginBottom: 14 }}>
             Last: {Number(lastRef.miss) === 0 ? "Dead on" : `${lastRef.miss} yds ${lastRef.dir === "S" ? "short" : "long"}`} ({lastRef.pts} pts)
           </div>
         )}
@@ -502,7 +602,7 @@ export default function App() {
                   ...BTN_BASE, flex: 1, fontSize: 15, fontWeight: 700,
                   background: sel ? b.color + "22" : "#1c1c1c",
                   color: sel ? b.color : "#666",
-                  border: sel ? `2px solid ${b.color}` : "2px solid #2a2a2a"
+                  border: sel ? `2px solid ${b.color}` : "2px solid #666"
                 }}>
                 {b.label}
               </button>
@@ -512,7 +612,7 @@ export default function App() {
 
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={() => setCardStep(Math.max(0, step - 1))} disabled={step === 0}
-            style={{ ...BTN_BASE, flex: 1, background: "#1c1c1c", color: step === 0 ? "#333" : "#999", border: "1px solid #2a2a2a" }}>
+            style={{ ...BTN_BASE, flex: 1, background: "#333", color: step === 0 ? "#555" : "#ccc", border: "1px solid #666" }}>
             ← Prev
           </button>
           {step < data.length - 1 ? (
@@ -564,21 +664,21 @@ export default function App() {
           <Header title="Session Summary" onBack={() => setShowSummary(false)} backLabel="← Edit" />
           <div style={{ textAlign: "center", marginBottom: 20 }}>
             <div style={{ fontFamily: BARLOW, fontSize: 72, fontWeight: 700, color: pctColor(passPct) }}>{passPct}%</div>
-            <div style={{ color: "#888", fontSize: 14 }}>Pass Rate</div>
+            <div style={{ color: "#ddd", fontSize: 14 }}>Pass Rate</div>
           </div>
           <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
             <div style={{ ...CARD, flex: 1, textAlign: "center" }}>
               <div style={{ fontFamily: BARLOW, fontSize: 28, fontWeight: 700, color: "#4ade80" }}>{passed}</div>
-              <div style={{ fontSize: 11, color: "#888" }}>Passed</div>
+              <div style={{ fontSize: 11, color: "#ddd" }}>Passed</div>
             </div>
             <div style={{ ...CARD, flex: 1, textAlign: "center" }}>
               <div style={{ fontFamily: BARLOW, fontSize: 28, fontWeight: 700, color: "#ef4444" }}>{failed}</div>
-              <div style={{ fontSize: 11, color: "#888" }}>Failed</div>
+              <div style={{ fontSize: 11, color: "#ddd" }}>Failed</div>
             </div>
           </div>
           <div style={{ ...CARD, display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-            <span style={{ fontSize: 13, color: "#888" }}>Club: <span style={{ color: "#fff" }}>{arcClub}</span></span>
-            <span style={{ fontSize: 13, color: "#888" }}>Location: <span style={{ color: "#fff" }}>{arcLocation}</span></span>
+            <span style={{ fontSize: 13, color: "#ddd" }}>Club: <span style={{ color: "#fff" }}>{arcClub}</span></span>
+            <span style={{ fontSize: 13, color: "#ddd" }}>Location: <span style={{ color: "#fff" }}>{arcLocation}</span></span>
           </div>
           <div style={{ marginBottom: 16 }}>
             {data.map((d, i) => (
@@ -588,7 +688,7 @@ export default function App() {
                   <span style={{ fontFamily: BARLOW, fontWeight: 600, fontSize: 16, color: cueStyles[d.cue].text }}>
                     {d.cue}
                   </span>
-                  <span style={{ fontSize: 12, color: "#666", marginLeft: 8 }}>Step {i + 1}</span>
+                  <span style={{ fontSize: 12, color: "#bbb", marginLeft: 8 }}>Step {i + 1}</span>
                 </div>
                 {d.result !== null && (
                   <span style={{ fontSize: 13, fontWeight: 600, color: d.result ? "#4ade80" : "#ef4444" }}>
@@ -616,7 +716,7 @@ export default function App() {
             <span style={{ fontSize: 10, color: GREEN, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}>
               ⛳ Golf Practice
             </span>
-            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#888", fontSize: 13, padding: "4px 8px" }}>
+            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
               ← Back
             </button>
           </div>
@@ -635,7 +735,7 @@ export default function App() {
           colorFn={(d, i) => {
             if (d.result === null) {
               if (i === step) return { bg: cueStyles[d.cue].bg, border: cueStyles[d.cue].text }
-              return { bg: "#2a2a2a" }
+              return { bg: "#444" }
             }
             return d.result
               ? { bg: "#4ade8044", border: "#4ade80" }
@@ -643,7 +743,7 @@ export default function App() {
           }}
         />
 
-        <div style={{ fontSize: 12, color: "#888", textAlign: "center", marginBottom: 6 }}>Step {step + 1} of {data.length}</div>
+        <div style={{ fontSize: 12, color: "#ddd", textAlign: "center", marginBottom: 6 }}>Step {step + 1} of {data.length}</div>
         <div style={{
           ...CARD, textAlign: "center", padding: 28, marginBottom: 14,
           background: cs.bg, border: `1px solid ${cs.border}`
@@ -664,7 +764,7 @@ export default function App() {
               ...BTN_BASE, flex: 1, fontSize: 16, fontWeight: 700,
               background: current.result === false ? "#ef444422" : "#1c1c1c",
               color: current.result === false ? "#ef4444" : "#666",
-              border: current.result === false ? "2px solid #ef4444" : "2px solid #2a2a2a"
+              border: current.result === false ? "2px solid #ef4444" : "2px solid #666"
             }}>
             FAIL
           </button>
@@ -673,7 +773,7 @@ export default function App() {
               ...BTN_BASE, flex: 1, fontSize: 16, fontWeight: 700,
               background: current.result === true ? "#4ade8022" : "#1c1c1c",
               color: current.result === true ? "#4ade80" : "#666",
-              border: current.result === true ? "2px solid #4ade80" : "2px solid #2a2a2a"
+              border: current.result === true ? "2px solid #4ade80" : "2px solid #666"
             }}>
             PASS
           </button>
@@ -681,11 +781,11 @@ export default function App() {
 
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={() => setCardStep(Math.max(0, step - 1))} disabled={step === 0}
-            style={{ ...BTN_BASE, flex: 1, background: "#1c1c1c", color: step === 0 ? "#333" : "#999", border: "1px solid #2a2a2a" }}>
+            style={{ ...BTN_BASE, flex: 1, background: "#333", color: step === 0 ? "#555" : "#ccc", border: "1px solid #666" }}>
             ← Prev
           </button>
           <button onClick={() => setShowSummary(true)}
-            style={{ ...BTN_BASE, flex: 1, background: "#1c1c1c", color: "#999", border: "1px solid #2a2a2a" }}>
+            style={{ ...BTN_BASE, flex: 1, background: "#333", color: "#ccc", border: "1px solid #666" }}>
             Summary
           </button>
         </div>
@@ -728,14 +828,14 @@ export default function App() {
             ].map(s => (
               <div key={s.label} style={{ ...CARD, flex: 1, textAlign: "center" }}>
                 <div style={{ fontFamily: BARLOW, fontSize: 28, fontWeight: 700, color: s.color }}>{s.val}%</div>
-                <div style={{ fontSize: 9, color: "#888", marginTop: 2 }}>{s.count}/{total}</div>
-                <div style={{ fontSize: 10, color: "#666", marginTop: 4 }}>{s.label}</div>
+                <div style={{ fontSize: 9, color: "#ddd", marginTop: 2 }}>{s.count}/{total}</div>
+                <div style={{ fontSize: 10, color: "#bbb", marginTop: 4 }}>{s.label}</div>
               </div>
             ))}
           </div>
           <div style={{ ...CARD, display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-            <span style={{ fontSize: 13, color: "#888" }}>Club: <span style={{ color: "#fff" }}>{arcClub}</span></span>
-            <span style={{ fontSize: 13, color: "#888" }}>Location: <span style={{ color: "#fff" }}>{arcLocation}</span></span>
+            <span style={{ fontSize: 13, color: "#ddd" }}>Club: <span style={{ color: "#fff" }}>{arcClub}</span></span>
+            <span style={{ fontSize: 13, color: "#ddd" }}>Location: <span style={{ color: "#fff" }}>{arcLocation}</span></span>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
             {data.map((d, i) => (
@@ -744,7 +844,7 @@ export default function App() {
                   width: "calc(25% - 5px)", ...CARD, textAlign: "center", padding: 8, cursor: "pointer",
                   marginBottom: 0
                 }}>
-                <div style={{ fontSize: 11, color: "#888", marginBottom: 2 }}>#{i + 1}</div>
+                <div style={{ fontSize: 11, color: "#ddd", marginBottom: 2 }}>#{i + 1}</div>
                 {logged(d) ? (
                   <>
                     <div style={{ fontSize: 11 }}>
@@ -755,7 +855,7 @@ export default function App() {
                     {combo(d) && <div style={{ fontSize: 9, color: "#4ade80" }}>✓</div>}
                   </>
                 ) : (
-                  <div style={{ fontSize: 11, color: "#444" }}>—</div>
+                  <div style={{ fontSize: 11, color: "#ccc" }}>—</div>
                 )}
               </div>
             ))}
@@ -780,7 +880,7 @@ export default function App() {
             <span style={{ fontSize: 10, color: GREEN, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}>
               ⛳ Golf Practice
             </span>
-            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#888", fontSize: 13, padding: "4px 8px" }}>
+            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
               ← Back
             </button>
           </div>
@@ -794,9 +894,9 @@ export default function App() {
 
         <DotGrid items={data} current={step} onTap={setCardStep}
           colorFn={(d, i) => {
-            if (!logged(d)) return { bg: "#2a2a2a", label: `${i + 1}`, text: "#666" }
+            if (!logged(d)) return { bg: "#444", label: `${i + 1}`, text: "#666" }
             if (combo(d)) return { bg: "#4ade8044", border: "#4ade80", label: "✓", text: "#4ade80" }
-            return { bg: "#555", label: "·", text: "#999" }
+            return { bg: "#666", label: "·", text: "#ccc" }
           }}
         />
 
@@ -826,7 +926,7 @@ export default function App() {
                     ...BTN_BASE, flex: 1, fontSize: 16, fontWeight: 700,
                     background: sel ? "#60a5fa22" : "#1c1c1c",
                     color: sel ? "#60a5fa" : "#666",
-                    border: sel ? "2px solid #60a5fa" : "2px solid #2a2a2a"
+                    border: sel ? "2px solid #60a5fa" : "2px solid #666"
                   }}>
                   {v}
                 </button>
@@ -846,7 +946,7 @@ export default function App() {
                     ...BTN_BASE, flex: 1, fontSize: 16, fontWeight: 700,
                     background: sel ? "#f472b622" : "#1c1c1c",
                     color: sel ? "#f472b6" : "#666",
-                    border: sel ? "2px solid #f472b6" : "2px solid #2a2a2a"
+                    border: sel ? "2px solid #f472b6" : "2px solid #666"
                   }}>
                   {v}
                 </button>
@@ -857,12 +957,464 @@ export default function App() {
 
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={() => setCardStep(Math.max(0, step - 1))} disabled={step === 0}
-            style={{ ...BTN_BASE, flex: 1, background: "#1c1c1c", color: step === 0 ? "#333" : "#999", border: "1px solid #2a2a2a" }}>
+            style={{ ...BTN_BASE, flex: 1, background: "#333", color: step === 0 ? "#555" : "#ccc", border: "1px solid #666" }}>
             ← Prev
           </button>
           {step < data.length - 1 ? (
             <button onClick={() => setCardStep(step + 1)}
               style={{ ...BTN_BASE, flex: 1, background: bothSelected ? GREEN : "#1c1c1c", color: bothSelected ? "#fff" : "#666", border: `1px solid ${bothSelected ? GREEN : "#2a2a2a"}` }}>
+              Next →
+            </button>
+          ) : (
+            <button onClick={() => setShowSummary(true)}
+              style={{ ...BTN_BASE, flex: 1, background: GREEN, color: "#fff" }}>
+              Finish →
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ──────────────────────────────
+  // SHAPE RANDOMIZER
+  // ──────────────────────────────
+  const SHAPE_VALID_COMBOS = [
+    { start: "Right", curve: "Straight" }, { start: "Right", curve: "Left" },
+    { start: "At Pin", curve: "Right" }, { start: "At Pin", curve: "Straight" }, { start: "At Pin", curve: "Left" },
+    { start: "Left", curve: "Right" }, { start: "Left", curve: "Straight" }
+  ]
+  const SHAPE_STARTS = ["Right", "At Pin", "Left"]
+  const SHAPE_CURVES = ["Right", "Straight", "Left"]
+
+  const ShapeRandomizerSession = () => {
+    const data = sessionData
+
+    const generateShots = (count) => {
+      const shots = Array(count).fill(null).map((_, i) => {
+        const combo = SHAPE_VALID_COMBOS[Math.floor(Math.random() * SHAPE_VALID_COMBOS.length)]
+        return { shot: i, targetStart: combo.start, targetCurve: combo.curve, actualStart: null, actualCurve: null }
+      })
+      setSessionData({ count, shots })
+      setCardStep(0)
+    }
+
+    // Setup: pick 10 or 20
+    if (data.count === null) {
+      return (
+        <div>
+          <Header title="Shape Randomizer" onBack={goHome} />
+          <div style={{ textAlign: "center", padding: "40px 0" }}>
+            <div style={{ fontFamily: BARLOW, fontSize: 22, fontWeight: 700, color: "#fff", marginBottom: 24 }}>
+              How many shots?
+            </div>
+            <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+              {[10, 20].map(n => (
+                <button key={n} onClick={() => generateShots(n)}
+                  style={{ ...BTN_BASE, fontSize: 22, fontWeight: 700, padding: "20px 40px", background: GREEN, color: "#fff" }}>
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    const shots = data.shots
+    const step = cardStep
+    const current = shots[step]
+    const logged = (d) => d.actualStart !== null && d.actualCurve !== null
+    const bothMatch = (d) => logged(d) && d.actualStart === d.targetStart && d.actualCurve === d.targetCurve
+    const startMatch = (d) => logged(d) && d.actualStart === d.targetStart
+    const curveMatch = (d) => logged(d) && d.actualCurve === d.targetCurve
+
+    const updateShot = (field, val) => {
+      setSessionData(prev => ({
+        ...prev,
+        shots: prev.shots.map((d, i) => i === step ? { ...d, [field]: val } : d)
+      }))
+    }
+
+    if (showSummary) {
+      const total = shots.filter(logged).length
+      const bothCount = shots.filter(bothMatch).length
+      const startCount = shots.filter(startMatch).length
+      const curveCount = shots.filter(curveMatch).length
+      const bothPct = total > 0 ? Math.round((bothCount / total) * 100) : 0
+      const startPct = total > 0 ? Math.round((startCount / total) * 100) : 0
+      const curvePct = total > 0 ? Math.round((curveCount / total) * 100) : 0
+
+      // Breakdown by target type
+      const startBreakdown = SHAPE_STARTS.map(s => {
+        const matching = shots.filter(d => d.targetStart === s && logged(d))
+        const hit = matching.filter(d => d.actualStart === s).length
+        return { label: s, hit, total: matching.length, pct: matching.length > 0 ? Math.round((hit / matching.length) * 100) : 0 }
+      })
+      const curveBreakdown = SHAPE_CURVES.map(c => {
+        const matching = shots.filter(d => d.targetCurve === c && logged(d))
+        const hit = matching.filter(d => d.actualCurve === c).length
+        return { label: c, hit, total: matching.length, pct: matching.length > 0 ? Math.round((hit / matching.length) * 100) : 0 }
+      })
+
+      return (
+        <div>
+          <Header title="Session Summary" onBack={() => setShowSummary(false)} backLabel="← Edit" />
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+            {[
+              { label: "Both", val: bothPct, count: bothCount, color: "#4ade80" },
+              { label: "Start", val: startPct, count: startCount, color: "#60a5fa" },
+              { label: "Curve", val: curvePct, count: curveCount, color: "#f472b6" }
+            ].map(s => (
+              <div key={s.label} style={{ ...CARD, flex: 1, textAlign: "center" }}>
+                <div style={{ fontFamily: BARLOW, fontSize: 28, fontWeight: 700, color: s.color }}>{s.val}%</div>
+                <div style={{ fontSize: 9, color: "#ddd", marginTop: 2 }}>{s.count}/{total}</div>
+                <div style={{ fontSize: 10, color: "#bbb", marginTop: 4 }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ ...CARD, marginBottom: 12 }}>
+            <div style={{ fontSize: 10, color: "#ddd", textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 8 }}>Start Breakdown</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {startBreakdown.map(b => (
+                <div key={b.label} style={{ flex: 1, textAlign: "center" }}>
+                  <div style={{ fontFamily: BARLOW, fontSize: 20, fontWeight: 700, color: pctColor(b.pct) }}>{b.pct}%</div>
+                  <div style={{ fontSize: 9, color: "#bbb" }}>{b.hit}/{b.total}</div>
+                  <div style={{ fontSize: 10, color: "#aaa", marginTop: 2 }}>{b.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ ...CARD, marginBottom: 16 }}>
+            <div style={{ fontSize: 10, color: "#ddd", textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 8 }}>Curve Breakdown</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {curveBreakdown.map(b => (
+                <div key={b.label} style={{ flex: 1, textAlign: "center" }}>
+                  <div style={{ fontFamily: BARLOW, fontSize: 20, fontWeight: 700, color: pctColor(b.pct) }}>{b.pct}%</div>
+                  <div style={{ fontSize: 9, color: "#bbb" }}>{b.hit}/{b.total}</div>
+                  <div style={{ fontSize: 10, color: "#aaa", marginTop: 2 }}>{b.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+            {shots.map((d, i) => (
+              <div key={i} onClick={() => { setCardStep(i); setShowSummary(false) }}
+                style={{
+                  width: "calc(25% - 5px)", ...CARD, textAlign: "center", padding: 8, cursor: "pointer",
+                  marginBottom: 0
+                }}>
+                <div style={{ fontSize: 11, color: "#ddd", marginBottom: 2 }}>#{i + 1}</div>
+                {logged(d) ? (
+                  <>
+                    <div style={{ fontSize: 9, color: "#aaa" }}>{d.targetStart[0]}→{d.targetCurve[0]}</div>
+                    <div style={{ fontSize: 11 }}>
+                      <span style={{ color: startMatch(d) ? "#60a5fa" : "#ef4444" }}>{d.actualStart[0]}</span>
+                      {"→"}
+                      <span style={{ color: curveMatch(d) ? "#f472b6" : "#ef4444" }}>{d.actualCurve[0]}</span>
+                    </div>
+                    {bothMatch(d) && <div style={{ fontSize: 9, color: "#4ade80" }}>✓</div>}
+                  </>
+                ) : (
+                  <div style={{ fontSize: 11, color: "#ccc" }}>—</div>
+                )}
+              </div>
+            ))}
+          </div>
+          <label style={LBL}>Session Notes</label>
+          <textarea value={sessionNotes} onChange={e => setSessionNotes(e.target.value)}
+            placeholder="Thoughts on this session..."
+            style={{ ...INP, minHeight: 80, resize: "vertical", marginBottom: 14 }} />
+          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14 }}>
+            Save Session
+          </button>
+        </div>
+      )
+    }
+
+    const bothSelected = current.actualStart !== null && current.actualCurve !== null
+
+    return (
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+          <div>
+            <span style={{ fontSize: 10, color: GREEN, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}>
+              ⛳ Golf Practice
+            </span>
+            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
+              ← Back
+            </button>
+          </div>
+        </div>
+        <h2 style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 22, color: "#fff", margin: "0 0 12px" }}>Shape Randomizer</h2>
+
+        <DotGrid items={shots} current={step} onTap={setCardStep}
+          colorFn={(d, i) => {
+            if (!logged(d)) return { bg: "#444", label: `${i + 1}`, text: "#666" }
+            if (bothMatch(d)) return { bg: "#4ade8044", border: "#4ade80", label: "✓", text: "#4ade80" }
+            if (startMatch(d) || curveMatch(d)) return { bg: "#facc1544", border: "#facc15", label: "½", text: "#facc15" }
+            return { bg: "#ef444444", border: "#ef4444", label: "✗", text: "#ef4444" }
+          }}
+        />
+
+        <div style={{
+          ...CARD, textAlign: "center", padding: 24, marginBottom: 14,
+          background: "#1a1a2e", border: "1px solid #2a2a5a"
+        }}>
+          <div style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 48, color: "#fff" }}>#{step + 1}</div>
+          <div style={{ marginTop: 8, fontSize: 16 }}>
+            <span style={{ color: "#60a5fa" }}>Start {current.targetStart}</span>
+            {" · "}
+            <span style={{ color: "#f472b6" }}>Curve {current.targetCurve}</span>
+          </div>
+          {bothSelected && (
+            <div style={{ marginTop: 8, fontSize: 13, color: "#aaa" }}>
+              Actual: <span style={{ color: startMatch(current) ? "#60a5fa" : "#ef4444" }}>{current.actualStart}</span>
+              {" · "}
+              <span style={{ color: curveMatch(current) ? "#f472b6" : "#ef4444" }}>{current.actualCurve}</span>
+              {bothMatch(current) && <span style={{ color: "#4ade80", marginLeft: 8 }}>✓</span>}
+            </div>
+          )}
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ ...LBL, color: "#60a5fa" }}>ACTUAL START</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            {SHAPE_STARTS.map(v => {
+              const sel = current.actualStart === v
+              return (
+                <button key={v} onClick={() => updateShot("actualStart", v)}
+                  style={{
+                    ...BTN_BASE, flex: 1, fontSize: 14, fontWeight: 700,
+                    background: sel ? "#60a5fa22" : "#1c1c1c",
+                    color: sel ? "#60a5fa" : "#666",
+                    border: sel ? "2px solid #60a5fa" : "2px solid #666"
+                  }}>
+                  {v}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ ...LBL, color: "#f472b6" }}>ACTUAL CURVE</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            {SHAPE_CURVES.map(v => {
+              const sel = current.actualCurve === v
+              return (
+                <button key={v} onClick={() => updateShot("actualCurve", v)}
+                  style={{
+                    ...BTN_BASE, flex: 1, fontSize: 14, fontWeight: 700,
+                    background: sel ? "#f472b622" : "#1c1c1c",
+                    color: sel ? "#f472b6" : "#666",
+                    border: sel ? "2px solid #f472b6" : "2px solid #666"
+                  }}>
+                  {v}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setCardStep(Math.max(0, step - 1))} disabled={step === 0}
+            style={{ ...BTN_BASE, flex: 1, background: "#333", color: step === 0 ? "#555" : "#ccc", border: "1px solid #666" }}>
+            ← Prev
+          </button>
+          {step < shots.length - 1 ? (
+            <button onClick={() => setCardStep(step + 1)}
+              style={{ ...BTN_BASE, flex: 1, background: bothSelected ? GREEN : "#1c1c1c", color: bothSelected ? "#fff" : "#666", border: `1px solid ${bothSelected ? GREEN : "#2a2a2a"}` }}>
+              Next →
+            </button>
+          ) : (
+            <button onClick={() => setShowSummary(true)}
+              style={{ ...BTN_BASE, flex: 1, background: GREEN, color: "#fff" }}>
+              Finish →
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ──────────────────────────────
+  // TOE/HEEL STRIKE
+  // ──────────────────────────────
+  const STRIKE_ZONES = ["Far Toe", "Toe", "Middle", "Heel", "Far Heel"]
+
+  const ToeHeelStrikeSession = () => {
+    const data = sessionData
+
+    const generateShots = (count) => {
+      const shots = Array(count).fill(null).map((_, i) => ({
+        shot: i,
+        target: STRIKE_ZONES[Math.floor(Math.random() * STRIKE_ZONES.length)],
+        result: null
+      }))
+      setSessionData({ count, shots })
+      setCardStep(0)
+    }
+
+    // Setup: pick 10 or 20
+    if (data.count === null) {
+      return (
+        <div>
+          <Header title="Toe/Heel Strike" onBack={goHome} />
+          <div style={{ textAlign: "center", padding: "40px 0" }}>
+            <div style={{ fontFamily: BARLOW, fontSize: 22, fontWeight: 700, color: "#fff", marginBottom: 24 }}>
+              How many shots?
+            </div>
+            <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+              {[10, 20].map(n => (
+                <button key={n} onClick={() => generateShots(n)}
+                  style={{ ...BTN_BASE, fontSize: 22, fontWeight: 700, padding: "20px 40px", background: GREEN, color: "#fff" }}>
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    const shots = data.shots
+    const step = cardStep
+    const current = shots[step]
+    const logged = (d) => d.result !== null
+    const hit = (d) => d.result === true
+
+    const updateShot = (val) => {
+      setSessionData(prev => ({
+        ...prev,
+        shots: prev.shots.map((d, i) => i === step ? { ...d, result: val } : d)
+      }))
+    }
+
+    if (showSummary) {
+      const total = shots.filter(logged).length
+      const hits = shots.filter(hit).length
+      const hitPct = total > 0 ? Math.round((hits / total) * 100) : 0
+
+      const zoneBreakdown = STRIKE_ZONES.map(z => {
+        const matching = shots.filter(d => d.target === z && logged(d))
+        const zHits = matching.filter(hit).length
+        return { label: z, hit: zHits, total: matching.length, pct: matching.length > 0 ? Math.round((zHits / matching.length) * 100) : 0 }
+      })
+
+      return (
+        <div>
+          <Header title="Session Summary" onBack={() => setShowSummary(false)} backLabel="← Edit" />
+          <div style={{ ...CARD, textAlign: "center", marginBottom: 16 }}>
+            <div style={{ fontFamily: BARLOW, fontSize: 42, fontWeight: 700, color: pctColor(hitPct) }}>{hitPct}%</div>
+            <div style={{ fontSize: 11, color: "#ddd", marginTop: 2 }}>{hits}/{total} hit</div>
+            <div style={{ fontSize: 10, color: "#bbb", marginTop: 4 }}>Overall</div>
+          </div>
+
+          <div style={{ ...CARD, marginBottom: 16 }}>
+            <div style={{ fontSize: 10, color: "#ddd", textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 8 }}>By Zone</div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {zoneBreakdown.map(b => (
+                <div key={b.label} style={{ flex: 1, textAlign: "center" }}>
+                  <div style={{ fontFamily: BARLOW, fontSize: 18, fontWeight: 700, color: pctColor(b.pct) }}>{b.pct}%</div>
+                  <div style={{ fontSize: 9, color: "#bbb" }}>{b.hit}/{b.total}</div>
+                  <div style={{ fontSize: 9, color: "#aaa", marginTop: 2 }}>{b.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+            {shots.map((d, i) => (
+              <div key={i} onClick={() => { setCardStep(i); setShowSummary(false) }}
+                style={{
+                  width: "calc(25% - 5px)", ...CARD, textAlign: "center", padding: 8, cursor: "pointer",
+                  marginBottom: 0
+                }}>
+                <div style={{ fontSize: 11, color: "#ddd", marginBottom: 2 }}>#{i + 1}</div>
+                <div style={{ fontSize: 9, color: "#aaa" }}>{d.target}</div>
+                {logged(d) ? (
+                  <div style={{ fontSize: 13, color: hit(d) ? "#4ade80" : "#ef4444" }}>{hit(d) ? "✓" : "✗"}</div>
+                ) : (
+                  <div style={{ fontSize: 11, color: "#ccc" }}>—</div>
+                )}
+              </div>
+            ))}
+          </div>
+          <label style={LBL}>Session Notes</label>
+          <textarea value={sessionNotes} onChange={e => setSessionNotes(e.target.value)}
+            placeholder="Thoughts on this session..."
+            style={{ ...INP, minHeight: 80, resize: "vertical", marginBottom: 14 }} />
+          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14 }}>
+            Save Session
+          </button>
+        </div>
+      )
+    }
+
+    return (
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+          <div>
+            <span style={{ fontSize: 10, color: GREEN, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}>
+              ⛳ Golf Practice
+            </span>
+            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
+              ← Back
+            </button>
+          </div>
+        </div>
+        <h2 style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 22, color: "#fff", margin: "0 0 12px" }}>Toe/Heel Strike</h2>
+
+        <DotGrid items={shots} current={step} onTap={setCardStep}
+          colorFn={(d, i) => {
+            if (!logged(d)) return { bg: "#444", label: `${i + 1}`, text: "#666" }
+            if (hit(d)) return { bg: "#4ade8044", border: "#4ade80", label: "✓", text: "#4ade80" }
+            return { bg: "#ef444444", border: "#ef4444", label: "✗", text: "#ef4444" }
+          }}
+        />
+
+        <div style={{
+          ...CARD, textAlign: "center", padding: 24, marginBottom: 14,
+          background: "#1a1a2e", border: "1px solid #2a2a5a"
+        }}>
+          <div style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 48, color: "#fff" }}>#{step + 1}</div>
+          <div style={{ marginTop: 8, fontSize: 20, fontWeight: 700, color: "#60a5fa" }}>{current.target}</div>
+          {current.result !== null && (
+            <div style={{ marginTop: 8, fontSize: 16, color: hit(current) ? "#4ade80" : "#ef4444" }}>
+              {hit(current) ? "✓ Hit" : "✗ Miss"}
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+          {[{ label: "✓ Hit", val: true, color: "#4ade80" }, { label: "✗ Miss", val: false, color: "#ef4444" }].map(opt => {
+            const sel = current.result === opt.val
+            return (
+              <button key={opt.label} onClick={() => updateShot(opt.val)}
+                style={{
+                  ...BTN_BASE, flex: 1, fontSize: 18, fontWeight: 700, padding: "16px 0",
+                  background: sel ? `${opt.color}22` : "#1c1c1c",
+                  color: sel ? opt.color : "#666",
+                  border: sel ? `2px solid ${opt.color}` : "2px solid #666"
+                }}>
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setCardStep(Math.max(0, step - 1))} disabled={step === 0}
+            style={{ ...BTN_BASE, flex: 1, background: "#333", color: step === 0 ? "#555" : "#ccc", border: "1px solid #666" }}>
+            ← Prev
+          </button>
+          {step < shots.length - 1 ? (
+            <button onClick={() => setCardStep(step + 1)}
+              style={{ ...BTN_BASE, flex: 1, background: current.result !== null ? GREEN : "#1c1c1c", color: current.result !== null ? "#fff" : "#666", border: `1px solid ${current.result !== null ? GREEN : "#2a2a2a"}` }}>
               Next →
             </button>
           ) : (
@@ -912,7 +1464,7 @@ export default function App() {
 
         {avg && (
           <div style={{ ...CARD, textAlign: "center", marginBottom: 14, background: GREEN_DIM, border: `1px solid ${GREEN}44` }}>
-            <div style={{ fontSize: 11, color: "#888", marginBottom: 2 }}>Avg Distance / Putt</div>
+            <div style={{ fontSize: 11, color: "#ddd", marginBottom: 2 }}>Avg Distance / Putt</div>
             <div style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 32, color: GREEN_LIGHT }}>{avg} ft</div>
           </div>
         )}
@@ -957,7 +1509,7 @@ export default function App() {
                   ...BTN_BASE, width: 52, height: 48, fontSize: 18, fontFamily: BARLOW, fontWeight: 700,
                   background: sel ? "#c084fc22" : "#1c1c1c",
                   color: sel ? "#c084fc" : "#666",
-                  border: sel ? "2px solid #c084fc" : "2px solid #2a2a2a"
+                  border: sel ? "2px solid #c084fc" : "2px solid #666"
                 }}>
                 {i}
               </button>
@@ -967,7 +1519,7 @@ export default function App() {
 
         {makePct !== null && (
           <div style={{ ...CARD, textAlign: "center", marginBottom: 14, background: pctColor(makePct) + "11", border: `1px solid ${pctColor(makePct)}44` }}>
-            <div style={{ fontSize: 11, color: "#888", marginBottom: 2 }}>Make Rate</div>
+            <div style={{ fontSize: 11, color: "#ddd", marginBottom: 2 }}>Make Rate</div>
             <div style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 32, color: pctColor(makePct) }}>{makePct}%</div>
           </div>
         )}
@@ -1018,7 +1570,7 @@ export default function App() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <span style={{ fontFamily: BARLOW, fontWeight: 600, fontSize: 16, color: "#fff" }}>Rep {i + 1}</span>
               <button onClick={() => deleteRep(i)}
-                style={{ ...BTN_BASE, background: "none", color: "#666", fontSize: 18, padding: "2px 6px" }}>×</button>
+                style={{ ...BTN_BASE, background: "none", color: "#bbb", fontSize: 18, padding: "2px 6px" }}>×</button>
             </div>
             <label style={LBL}>Grade</label>
             <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
@@ -1030,7 +1582,7 @@ export default function App() {
                       ...BTN_BASE, flex: 1, fontSize: 16, fontFamily: BARLOW, fontWeight: 700,
                       background: sel ? GREEN_DIM : "#1c1c1c",
                       color: sel ? GREEN_LIGHT : "#666",
-                      border: sel ? `2px solid ${GREEN}` : "2px solid #2a2a2a",
+                      border: sel ? `2px solid ${GREEN}` : "2px solid #666",
                       padding: "10px 0"
                     }}>
                     {g}
@@ -1056,7 +1608,7 @@ export default function App() {
         ))}
 
         {data.length === 0 && (
-          <div style={{ textAlign: "center", padding: 40, color: "#444" }}>
+          <div style={{ textAlign: "center", padding: 40, color: "#ccc" }}>
             Tap "＋ Add Rep" to start logging
           </div>
         )}
@@ -1073,6 +1625,741 @@ export default function App() {
           }}>
           Save Session
         </button>
+      </div>
+    )
+  }
+
+  // ──────────────────────────────
+  // DRIVER UPRIGHTS
+  // ──────────────────────────────
+  const DriverUprightsSession = () => {
+    const data = sessionData
+    const step = cardStep
+    const current = data[step]
+
+    const logged = (d) => d.uprights !== null && d.shape !== null
+    const hit = (d) => d.uprights === true
+
+    const updateShot = (field, val) => {
+      setSessionData(prev => prev.map((d, i) => i === step ? { ...d, [field]: val } : d))
+    }
+
+    if (showSummary) {
+      const total = data.filter(logged).length
+      const hits = data.filter(d => logged(d) && hit(d)).length
+      const hitPct = total > 0 ? Math.round((hits / total) * 100) : 0
+      const shapeCounts = {}
+      SHOT_SHAPES.forEach(s => { shapeCounts[s] = data.filter(d => d.shape === s).length })
+
+      return (
+        <div>
+          <Header title="Session Summary" onBack={() => setShowSummary(false)} backLabel="← Edit" />
+          <div style={{ textAlign: "center", marginBottom: 20 }}>
+            <div style={{ fontFamily: BARLOW, fontSize: 72, fontWeight: 700, color: pctColor(hitPct) }}>{hitPct}%</div>
+            <div style={{ color: "#ddd", fontSize: 14 }}>Fairway Hit Rate · {hits}/{total}</div>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
+            {SHOT_SHAPES.map(s => (
+              <div key={s} style={{ ...CARD, flex: "1 1 calc(33% - 6px)", textAlign: "center", minWidth: 80 }}>
+                <div style={{ fontFamily: BARLOW, fontSize: 24, fontWeight: 700, color: "#fff" }}>{shapeCounts[s]}</div>
+                <div style={{ fontSize: 10, color: "#ddd" }}>{s}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ ...CARD, display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
+            <span style={{ fontSize: 13, color: "#ddd" }}>Club: <span style={{ color: "#fff" }}>{arcClub}</span></span>
+            <span style={{ fontSize: 13, color: "#ddd" }}>Location: <span style={{ color: "#fff" }}>{arcLocation}</span></span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+            {data.map((d, i) => (
+              <div key={i} onClick={() => { setCardStep(i); setShowSummary(false) }}
+                style={{
+                  width: "calc(25% - 5px)", ...CARD, textAlign: "center", padding: 8, cursor: "pointer",
+                  marginBottom: 0
+                }}>
+                <div style={{ fontSize: 11, color: "#ddd", marginBottom: 2 }}>#{i + 1}</div>
+                {logged(d) ? (
+                  <>
+                    <div style={{ fontSize: 13, color: hit(d) ? "#5eeb96" : "#ef4444", fontWeight: 700 }}>
+                      {hit(d) ? "✓" : "✗"}
+                    </div>
+                    <div style={{ fontSize: 9, color: "#ccc" }}>{d.shape}</div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: 11, color: "#666" }}>—</div>
+                )}
+              </div>
+            ))}
+          </div>
+          <label style={LBL}>Session Notes</label>
+          <textarea value={sessionNotes} onChange={e => setSessionNotes(e.target.value)}
+            placeholder="Thoughts on this session..."
+            style={{ ...INP, minHeight: 80, resize: "vertical", marginBottom: 14 }} />
+          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14 }}>
+            Save Session
+          </button>
+        </div>
+      )
+    }
+
+    const bothSelected = current.uprights !== null && current.shape !== null
+
+    return (
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+          <div>
+            <span style={{ fontSize: 10, color: GREEN, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}>
+              ⛳ Golf Practice
+            </span>
+            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
+              ← Back
+            </button>
+          </div>
+        </div>
+        <h2 style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 22, color: "#fff", margin: "0 0 12px" }}>{activeDrill.name}</h2>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+          <Select label="Club" value={arcClub} onChange={setArcClub} options={CLUBS} />
+          <Select label="Location" value={arcLocation} onChange={setArcLocation} options={LOCATIONS} />
+        </div>
+
+        <DotGrid items={data} current={step} onTap={setCardStep}
+          colorFn={(d, i) => {
+            if (!logged(d)) return { bg: "#444", label: `${i + 1}`, text: "#ccc" }
+            if (hit(d)) return { bg: "#5eeb9644", border: "#5eeb96", label: "✓", text: "#5eeb96" }
+            return { bg: "#ef444444", border: "#ef4444", label: "✗", text: "#ef4444" }
+          }}
+        />
+
+        <div style={{
+          ...CARD, textAlign: "center", padding: 24, marginBottom: 14,
+          background: "#1a2e1a", border: "1px solid #2a5a2a"
+        }}>
+          <div style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 48, color: "#fff" }}>#{step + 1}</div>
+          {bothSelected && (
+            <div style={{ marginTop: 8, fontSize: 14 }}>
+              <span style={{ color: current.uprights ? "#5eeb96" : "#ef4444", fontWeight: 700 }}>
+                {current.uprights ? "✓ Fairway" : "✗ Missed"}
+              </span>
+              <span style={{ color: "#ccc", marginLeft: 8 }}>{current.shape}</span>
+            </div>
+          )}
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ ...LBL, color: "#5eeb96" }}>IN THE UPRIGHTS?</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            {[{ val: true, label: "YES", color: "#5eeb96" }, { val: false, label: "NO", color: "#ef4444" }].map(b => {
+              const sel = current.uprights === b.val
+              return (
+                <button key={b.label} onClick={() => updateShot("uprights", b.val)}
+                  style={{
+                    ...BTN_BASE, flex: 1, fontSize: 16, fontWeight: 700,
+                    background: sel ? b.color + "22" : "#333",
+                    color: sel ? b.color : "#ccc",
+                    border: sel ? `2px solid ${b.color}` : "2px solid #666"
+                  }}>
+                  {b.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ ...LBL, color: "#60a5fa" }}>SHOT SHAPE</label>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {SHOT_SHAPES.map(s => {
+              const sel = current.shape === s
+              return (
+                <button key={s} onClick={() => updateShot("shape", s)}
+                  style={{
+                    ...BTN_BASE, flex: "1 1 calc(33% - 4px)", fontSize: 13, fontWeight: 700,
+                    background: sel ? "#60a5fa22" : "#333",
+                    color: sel ? "#60a5fa" : "#ccc",
+                    border: sel ? "2px solid #60a5fa" : "2px solid #666",
+                    padding: "10px 8px"
+                  }}>
+                  {s}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setCardStep(Math.max(0, step - 1))} disabled={step === 0}
+            style={{ ...BTN_BASE, flex: 1, background: "#333", color: step === 0 ? "#555" : "#ccc", border: "1px solid #666" }}>
+            ← Prev
+          </button>
+          {step < data.length - 1 ? (
+            <button onClick={() => setCardStep(step + 1)}
+              style={{ ...BTN_BASE, flex: 1, background: bothSelected ? GREEN : "#333", color: bothSelected ? "#fff" : "#ccc", border: `1px solid ${bothSelected ? GREEN : "#666"}` }}>
+              Next →
+            </button>
+          ) : (
+            <button onClick={() => setShowSummary(true)}
+              style={{ ...BTN_BASE, flex: 1, background: GREEN, color: "#fff" }}>
+              Finish →
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ──────────────────────────────
+  // START LINE
+  // ──────────────────────────────
+  const StartLineSession = () => {
+    const data = sessionData
+    const step = cardStep
+    const current = data[step]
+
+    const logged = (d) => d.gate !== null && d.lineRight !== null && d.break_dir !== null
+
+    const updateShot = (field, val) => {
+      setSessionData(prev => prev.map((d, i) => i === step ? { ...d, [field]: val } : d))
+    }
+
+    if (showSummary) {
+      const total = data.filter(logged).length
+      const gates = data.filter(d => d.gate === true).length
+      const gatePct = total > 0 ? Math.round((gates / total) * 100) : 0
+      const lineAll = data.filter(d => logged(d) && d.lineRight === true).length
+      const lineAllPct = total > 0 ? Math.round((lineAll / total) * 100) : 0
+
+      const breakStats = PUTT_BREAKS.map(b => {
+        const putts = data.filter(d => logged(d) && d.break_dir === b)
+        const right = putts.filter(d => d.lineRight === true).length
+        const pct = putts.length > 0 ? Math.round((right / putts.length) * 100) : null
+        return { label: b, right, total: putts.length, pct }
+      })
+
+      return (
+        <div>
+          <Header title="Session Summary" onBack={() => setShowSummary(false)} backLabel="← Edit" />
+          <div style={{ textAlign: "center", marginBottom: 20 }}>
+            <div style={{ fontFamily: BARLOW, fontSize: 72, fontWeight: 700, color: pctColor(gatePct) }}>{gatePct}%</div>
+            <div style={{ color: "#ddd", fontSize: 14 }}>Through the Gate · {gates}/{total}</div>
+          </div>
+          <div style={{ ...CARD, textAlign: "center", marginBottom: 16 }}>
+            <div style={{ fontFamily: BARLOW, fontSize: 36, fontWeight: 700, color: pctColor(lineAllPct) }}>{lineAllPct}%</div>
+            <div style={{ fontSize: 11, color: "#ddd" }}>Line Right (All Putts) · {lineAll}/{total}</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+            {breakStats.map(s => (
+              <div key={s.label} style={{ ...CARD, flex: 1, textAlign: "center" }}>
+                <div style={{ fontFamily: BARLOW, fontSize: 24, fontWeight: 700, color: s.pct !== null ? pctColor(s.pct) : "#bbb" }}>
+                  {s.pct !== null ? `${s.pct}%` : "—"}
+                </div>
+                <div style={{ fontSize: 9, color: "#ddd", marginTop: 2 }}>{s.right}/{s.total}</div>
+                <div style={{ fontSize: 9, color: "#bbb", marginTop: 4 }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+            {data.map((d, i) => (
+              <div key={i} onClick={() => { setCardStep(i); setShowSummary(false) }}
+                style={{
+                  width: "calc(25% - 5px)", ...CARD, textAlign: "center", padding: 8, cursor: "pointer",
+                  marginBottom: 0
+                }}>
+                <div style={{ fontSize: 11, color: "#ddd", marginBottom: 2 }}>#{i + 1}</div>
+                {logged(d) ? (
+                  <>
+                    <div style={{ fontSize: 13, color: d.gate ? "#5eeb96" : "#ef4444", fontWeight: 700 }}>
+                      {d.gate ? "✓" : "✗"}
+                    </div>
+                    <div style={{ fontSize: 8, color: d.lineRight ? "#5eeb96" : "#ef4444" }}>
+                      {d.lineRight ? "Line ✓" : "Line ✗"}
+                    </div>
+                    <div style={{ fontSize: 8, color: "#ccc" }}>
+                      {d.break_dir === "Left to Right" ? "L→R" : d.break_dir === "Right to Left" ? "R→L" : "Str"}
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: 11, color: "#666" }}>—</div>
+                )}
+              </div>
+            ))}
+          </div>
+          <label style={LBL}>Session Notes</label>
+          <textarea value={sessionNotes} onChange={e => setSessionNotes(e.target.value)}
+            placeholder="Thoughts on this session..."
+            style={{ ...INP, minHeight: 80, resize: "vertical", marginBottom: 14 }} />
+          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14 }}>
+            Save Session
+          </button>
+        </div>
+      )
+    }
+
+    const allSelected = current.gate !== null && current.lineRight !== null && current.break_dir !== null
+
+    return (
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+          <div>
+            <span style={{ fontSize: 10, color: GREEN, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}>
+              ⛳ Golf Practice
+            </span>
+            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
+              ← Back
+            </button>
+          </div>
+        </div>
+        <h2 style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 22, color: "#fff", margin: "0 0 12px" }}>{activeDrill.name}</h2>
+
+        <DotGrid items={data} current={step} onTap={setCardStep}
+          colorFn={(d, i) => {
+            if (!logged(d)) return { bg: "#444", label: `${i + 1}`, text: "#ccc" }
+            if (d.gate && d.lineRight) return { bg: "#5eeb9644", border: "#5eeb96", label: "✓", text: "#5eeb96" }
+            if (d.gate || d.lineRight) return { bg: "#facc1544", border: "#facc15", label: "·", text: "#facc15" }
+            return { bg: "#ef444444", border: "#ef4444", label: "✗", text: "#ef4444" }
+          }}
+        />
+
+        <div style={{
+          ...CARD, textAlign: "center", padding: 24, marginBottom: 14,
+          background: "#1a1a2e", border: "1px solid #2a2a5a"
+        }}>
+          <div style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 48, color: "#fff" }}>#{step + 1}</div>
+          {allSelected && (
+            <div style={{ marginTop: 8, fontSize: 14 }}>
+              <span style={{ color: current.gate ? "#5eeb96" : "#ef4444", fontWeight: 700 }}>
+                {current.gate ? "✓ Gate" : "✗ Gate"}
+              </span>
+              <span style={{ color: current.lineRight ? "#5eeb96" : "#ef4444", marginLeft: 10, fontWeight: 700 }}>
+                {current.lineRight ? "✓ Line" : "✗ Line"}
+              </span>
+              <span style={{ color: "#ccc", marginLeft: 10 }}>{current.break_dir}</span>
+            </div>
+          )}
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ ...LBL, color: "#5eeb96" }}>THROUGH THE GATE?</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            {[{ val: true, label: "YES", color: "#5eeb96" }, { val: false, label: "NO", color: "#ef4444" }].map(b => {
+              const sel = current.gate === b.val
+              return (
+                <button key={b.label} onClick={() => updateShot("gate", b.val)}
+                  style={{
+                    ...BTN_BASE, flex: 1, fontSize: 16, fontWeight: 700,
+                    background: sel ? b.color + "22" : "#333",
+                    color: sel ? b.color : "#ccc",
+                    border: sel ? `2px solid ${b.color}` : "2px solid #666"
+                  }}>
+                  {b.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ ...LBL, color: "#60a5fa" }}>LINE RIGHT?</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            {[{ val: true, label: "YES", color: "#5eeb96" }, { val: false, label: "NO", color: "#ef4444" }].map(b => {
+              const sel = current.lineRight === b.val
+              return (
+                <button key={b.label} onClick={() => updateShot("lineRight", b.val)}
+                  style={{
+                    ...BTN_BASE, flex: 1, fontSize: 16, fontWeight: 700,
+                    background: sel ? b.color + "22" : "#333",
+                    color: sel ? b.color : "#ccc",
+                    border: sel ? `2px solid ${b.color}` : "2px solid #666"
+                  }}>
+                  {b.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ ...LBL, color: "#c084fc" }}>PUTT BREAK</label>
+          <div style={{ display: "flex", gap: 6 }}>
+            {PUTT_BREAKS.map(b => {
+              const sel = current.break_dir === b
+              const short = b === "Left to Right" ? "L → R" : b === "Right to Left" ? "R → L" : "Straight"
+              return (
+                <button key={b} onClick={() => updateShot("break_dir", b)}
+                  style={{
+                    ...BTN_BASE, flex: 1, fontSize: 13, fontWeight: 700,
+                    background: sel ? "#c084fc22" : "#333",
+                    color: sel ? "#c084fc" : "#ccc",
+                    border: sel ? "2px solid #c084fc" : "2px solid #666",
+                    padding: "10px 6px"
+                  }}>
+                  {short}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setCardStep(Math.max(0, step - 1))} disabled={step === 0}
+            style={{ ...BTN_BASE, flex: 1, background: "#333", color: step === 0 ? "#555" : "#ccc", border: "1px solid #666" }}>
+            ← Prev
+          </button>
+          {step < data.length - 1 ? (
+            <button onClick={() => setCardStep(step + 1)}
+              style={{ ...BTN_BASE, flex: 1, background: allSelected ? GREEN : "#333", color: allSelected ? "#fff" : "#ccc", border: `1px solid ${allSelected ? GREEN : "#666"}` }}>
+              Next →
+            </button>
+          ) : (
+            <button onClick={() => setShowSummary(true)}
+              style={{ ...BTN_BASE, flex: 1, background: GREEN, color: "#fff" }}>
+              Finish →
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ──────────────────────────────
+  // LAG
+  // ──────────────────────────────
+  const LagSession = () => {
+    const data = sessionData
+
+    // Setup screen: choose 10 or 20
+    if (data.count === null) {
+      return (
+        <div>
+          <Header title="Lag" onBack={goHome} />
+          <div style={{ textAlign: "center", padding: "40px 0 20px" }}>
+            <div style={{ fontSize: 14, color: "#ddd", marginBottom: 20 }}>How many putts?</div>
+            <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+              {[10, 20].map(n => (
+                <button key={n} onClick={() => {
+                  setSessionData({
+                    count: n,
+                    putts: Array(n).fill(null).map((_, i) => ({
+                      shot: i, totalPutts: "", firstDist: "", break_dir: null,
+                      slope: null, result: null, secondDist: ""
+                    }))
+                  })
+                }}
+                  style={{
+                    ...BTN_BASE, width: 100, height: 80, fontSize: 32, fontFamily: BARLOW, fontWeight: 700,
+                    background: GREEN_DIM, color: GREEN_LIGHT, border: `2px solid ${GREEN}`
+                  }}>
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    const putts = data.putts
+    const step = cardStep
+    const current = putts[step]
+
+    const logged = (d) => d.totalPutts !== "" && d.break_dir !== null && d.slope !== null && d.result !== null
+
+    const updatePutt = (field, val) => {
+      setSessionData(prev => ({
+        ...prev,
+        putts: prev.putts.map((d, i) => i === step ? { ...d, [field]: val } : d)
+      }))
+    }
+
+    if (showSummary) {
+      const total = putts.filter(logged).length
+      // Overall result breakdown
+      const shorts = putts.filter(d => d.result === "Short").length
+      const evens = putts.filter(d => d.result === "Even").length
+      const longs = putts.filter(d => d.result === "Long").length
+
+      // Avg putts and 2-putt-or-less %
+      const puttCounts = putts.filter(d => d.totalPutts !== "" && !isNaN(Number(d.totalPutts)))
+      const avgPutts = puttCounts.length > 0
+        ? (puttCounts.reduce((s, d) => s + Number(d.totalPutts), 0) / puttCounts.length).toFixed(1)
+        : null
+      const twoPuttOrLess = puttCounts.filter(d => Number(d.totalPutts) <= 2).length
+      const twoPuttPct = puttCounts.length > 0 ? Math.round((twoPuttOrLess / puttCounts.length) * 100) : 0
+
+      // By slope
+      const slopeStats = LAG_SLOPES.map(s => {
+        const group = putts.filter(d => d.slope === s && d.result !== null)
+        return {
+          label: s,
+          total: group.length,
+          short: group.filter(d => d.result === "Short").length,
+          even: group.filter(d => d.result === "Even").length,
+          long: group.filter(d => d.result === "Long").length,
+        }
+      })
+
+      // By break
+      const breakStats = PUTT_BREAKS.map(b => {
+        const group = putts.filter(d => d.break_dir === b && d.result !== null)
+        return {
+          label: b,
+          short: b === "Left to Right" ? "L→R" : b === "Right to Left" ? "R→L" : "Str",
+          total: group.length,
+          shortCount: group.filter(d => d.result === "Short").length,
+          even: group.filter(d => d.result === "Even").length,
+          long: group.filter(d => d.result === "Long").length,
+        }
+      })
+
+      // Avg 2nd putt distance
+      const secondDists = putts.filter(d => d.secondDist !== "" && !isNaN(Number(d.secondDist)))
+      const avgSecond = secondDists.length > 0
+        ? (secondDists.reduce((s, d) => s + Number(d.secondDist), 0) / secondDists.length).toFixed(1)
+        : null
+
+      return (
+        <div>
+          <Header title="Session Summary" onBack={() => setShowSummary(false)} backLabel="← Edit" />
+          <div style={{ textAlign: "center", marginBottom: 20 }}>
+            <div style={{ fontFamily: BARLOW, fontSize: 72, fontWeight: 700, color: pctColor(twoPuttPct) }}>
+              {avgPutts || "—"}
+            </div>
+            <div style={{ color: "#ddd", fontSize: 14 }}>Avg Putts · {twoPuttPct}% two-putt or less</div>
+          </div>
+
+          {/* Overall result */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+            {[
+              { label: "Short", val: shorts, color: "#60a5fa" },
+              { label: "Even", val: evens, color: "#5eeb96" },
+              { label: "Long", val: longs, color: "#fb923c" }
+            ].map(s => (
+              <div key={s.label} style={{ ...CARD, flex: 1, textAlign: "center" }}>
+                <div style={{ fontFamily: BARLOW, fontSize: 28, fontWeight: 700, color: s.color }}>{s.val}</div>
+                <div style={{ fontSize: 10, color: "#ddd" }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {avgSecond && (
+            <div style={{ ...CARD, textAlign: "center", marginBottom: 16 }}>
+              <div style={{ fontFamily: BARLOW, fontSize: 28, fontWeight: 700, color: GREEN_LIGHT }}>{avgSecond} ft</div>
+              <div style={{ fontSize: 10, color: "#ddd" }}>Avg 2nd Putt Distance</div>
+            </div>
+          )}
+
+          {/* By Slope */}
+          <div style={{ fontSize: 11, color: "#ddd", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>By Slope</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+            {slopeStats.map(s => (
+              <div key={s.label} style={{ ...CARD, flex: 1, textAlign: "center" }}>
+                <div style={{ fontSize: 11, color: "#fff", fontWeight: 700, marginBottom: 4 }}>{s.label}</div>
+                {s.total > 0 ? (
+                  <div style={{ fontSize: 10, color: "#ccc" }}>
+                    <span style={{ color: "#60a5fa" }}>S{s.short}</span>
+                    {" · "}<span style={{ color: "#5eeb96" }}>E{s.even}</span>
+                    {" · "}<span style={{ color: "#fb923c" }}>L{s.long}</span>
+                  </div>
+                ) : <div style={{ fontSize: 10, color: "#666" }}>—</div>}
+              </div>
+            ))}
+          </div>
+
+          {/* By Break */}
+          <div style={{ fontSize: 11, color: "#ddd", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>By Break</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+            {breakStats.map(s => (
+              <div key={s.label} style={{ ...CARD, flex: 1, textAlign: "center" }}>
+                <div style={{ fontSize: 11, color: "#fff", fontWeight: 700, marginBottom: 4 }}>{s.short}</div>
+                {s.total > 0 ? (
+                  <div style={{ fontSize: 10, color: "#ccc" }}>
+                    <span style={{ color: "#60a5fa" }}>S{s.shortCount}</span>
+                    {" · "}<span style={{ color: "#5eeb96" }}>E{s.even}</span>
+                    {" · "}<span style={{ color: "#fb923c" }}>L{s.long}</span>
+                  </div>
+                ) : <div style={{ fontSize: 10, color: "#666" }}>—</div>}
+              </div>
+            ))}
+          </div>
+
+          {/* Shot grid */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+            {putts.map((d, i) => (
+              <div key={i} onClick={() => { setCardStep(i); setShowSummary(false) }}
+                style={{
+                  width: "calc(25% - 5px)", ...CARD, textAlign: "center", padding: 8, cursor: "pointer",
+                  marginBottom: 0
+                }}>
+                <div style={{ fontSize: 11, color: "#ddd", marginBottom: 2 }}>#{i + 1}</div>
+                {logged(d) ? (
+                  <>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: d.result === "Even" ? "#5eeb96" : d.result === "Short" ? "#60a5fa" : "#fb923c" }}>
+                      {d.result}
+                    </div>
+                    <div style={{ fontSize: 8, color: "#ccc" }}>{d.totalPutts}p · {d.firstDist}ft</div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: 11, color: "#666" }}>—</div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <label style={LBL}>Session Notes</label>
+          <textarea value={sessionNotes} onChange={e => setSessionNotes(e.target.value)}
+            placeholder="Thoughts on this session..."
+            style={{ ...INP, minHeight: 80, resize: "vertical", marginBottom: 14 }} />
+          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14 }}>
+            Save Session
+          </button>
+        </div>
+      )
+    }
+
+    const allSelected = current.totalPutts !== "" && current.break_dir !== null && current.slope !== null && current.result !== null
+
+    return (
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+          <div>
+            <span style={{ fontSize: 10, color: GREEN, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}>
+              ⛳ Golf Practice
+            </span>
+            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
+              ← Back
+            </button>
+          </div>
+        </div>
+        <h2 style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 22, color: "#fff", margin: "0 0 12px" }}>{activeDrill.name}</h2>
+
+        <DotGrid items={putts} current={step} onTap={setCardStep}
+          colorFn={(d, i) => {
+            if (!logged(d)) return { bg: "#444", label: `${i + 1}`, text: "#ccc" }
+            if (d.result === "Even") return { bg: "#5eeb9644", border: "#5eeb96", label: "✓", text: "#5eeb96" }
+            if (d.result === "Short") return { bg: "#60a5fa44", border: "#60a5fa", label: "S", text: "#60a5fa" }
+            return { bg: "#fb923c44", border: "#fb923c", label: "L", text: "#fb923c" }
+          }}
+        />
+
+        <div style={{
+          ...CARD, textAlign: "center", padding: 20, marginBottom: 14,
+          background: "#1a1a2e", border: "1px solid #2a2a5a"
+        }}>
+          <div style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 48, color: "#fff" }}>#{step + 1}</div>
+          {allSelected && (
+            <div style={{ marginTop: 8, fontSize: 13 }}>
+              <span style={{ color: current.result === "Even" ? "#5eeb96" : current.result === "Short" ? "#60a5fa" : "#fb923c", fontWeight: 700 }}>
+                {current.result}
+              </span>
+              <span style={{ color: "#ccc", marginLeft: 8 }}>{current.slope} · {current.break_dir === "Left to Right" ? "L→R" : current.break_dir === "Right to Left" ? "R→L" : "Str"}</span>
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <div style={{ flex: 1 }}>
+            <label style={LBL}># of Putts</label>
+            <input type="text" inputMode="numeric" value={current.totalPutts}
+              onChange={e => updatePutt("totalPutts", e.target.value.replace(/[^0-9]/g, ""))}
+              style={{ ...INP, textAlign: "center", fontSize: 22, fontFamily: BARLOW, fontWeight: 700 }} placeholder="0" />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={LBL}>1st Putt Dist (ft)</label>
+            <input type="text" inputMode="decimal" value={current.firstDist}
+              onChange={e => updatePutt("firstDist", e.target.value.replace(/[^0-9.]/g, ""))}
+              style={{ ...INP, textAlign: "center", fontSize: 22, fontFamily: BARLOW, fontWeight: 700 }} placeholder="0" />
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ ...LBL, color: "#c084fc" }}>1ST PUTT BREAK</label>
+          <div style={{ display: "flex", gap: 6 }}>
+            {PUTT_BREAKS.map(b => {
+              const sel = current.break_dir === b
+              const short = b === "Left to Right" ? "L → R" : b === "Right to Left" ? "R → L" : "Straight"
+              return (
+                <button key={b} onClick={() => updatePutt("break_dir", b)}
+                  style={{
+                    ...BTN_BASE, flex: 1, fontSize: 12, fontWeight: 700,
+                    background: sel ? "#c084fc22" : "#333",
+                    color: sel ? "#c084fc" : "#ccc",
+                    border: sel ? "2px solid #c084fc" : "2px solid #666",
+                    padding: "10px 6px"
+                  }}>
+                  {short}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ ...LBL, color: "#facc15" }}>1ST PUTT SLOPE</label>
+          <div style={{ display: "flex", gap: 6 }}>
+            {LAG_SLOPES.map(s => {
+              const sel = current.slope === s
+              return (
+                <button key={s} onClick={() => updatePutt("slope", s)}
+                  style={{
+                    ...BTN_BASE, flex: 1, fontSize: 12, fontWeight: 700,
+                    background: sel ? "#facc1522" : "#333",
+                    color: sel ? "#facc15" : "#ccc",
+                    border: sel ? "2px solid #facc15" : "2px solid #666",
+                    padding: "10px 6px"
+                  }}>
+                  {s}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ ...LBL, color: "#5eeb96" }}>1ST PUTT RESULT</label>
+          <div style={{ display: "flex", gap: 6 }}>
+            {LAG_RESULTS.map(r => {
+              const sel = current.result === r
+              const color = r === "Even" ? "#5eeb96" : r === "Short" ? "#60a5fa" : "#fb923c"
+              return (
+                <button key={r} onClick={() => updatePutt("result", r)}
+                  style={{
+                    ...BTN_BASE, flex: 1, fontSize: 13, fontWeight: 700,
+                    background: sel ? color + "22" : "#333",
+                    color: sel ? color : "#ccc",
+                    border: sel ? `2px solid ${color}` : "2px solid #666",
+                    padding: "10px 6px"
+                  }}>
+                  {r}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={LBL}>2nd Putt Dist (ft)</label>
+          <input type="text" inputMode="decimal" value={current.secondDist}
+            onChange={e => updatePutt("secondDist", e.target.value.replace(/[^0-9.]/g, ""))}
+            style={{ ...INP, textAlign: "center", fontSize: 22, fontFamily: BARLOW, fontWeight: 700 }} placeholder="0" />
+        </div>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setCardStep(Math.max(0, step - 1))} disabled={step === 0}
+            style={{ ...BTN_BASE, flex: 1, background: "#333", color: step === 0 ? "#555" : "#ccc", border: "1px solid #666" }}>
+            ← Prev
+          </button>
+          {step < putts.length - 1 ? (
+            <button onClick={() => setCardStep(step + 1)}
+              style={{ ...BTN_BASE, flex: 1, background: allSelected ? GREEN : "#333", color: allSelected ? "#fff" : "#ccc", border: `1px solid ${allSelected ? GREEN : "#666"}` }}>
+              Next →
+            </button>
+          ) : (
+            <button onClick={() => setShowSummary(true)}
+              style={{ ...BTN_BASE, flex: 1, background: GREEN, color: "#fff" }}>
+              Finish →
+            </button>
+          )}
+        </div>
       </div>
     )
   }
@@ -1095,7 +2382,7 @@ export default function App() {
           return (
             <div>
               <span style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 20, color: GREEN_LIGHT }}>{score}/{max}</span>
-              <span style={{ fontSize: 11, color: "#666", marginLeft: 8 }}>{shorts}S / {longs}L</span>
+              <span style={{ fontSize: 11, color: "#bbb", marginLeft: 8 }}>{shorts}S / {longs}L</span>
             </div>
           )
         }
@@ -1106,7 +2393,7 @@ export default function App() {
           return (
             <div>
               <span style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 20, color: pctColor(pct) }}>{pct}%</span>
-              <span style={{ fontSize: 11, color: "#666", marginLeft: 8 }}>{s.club} · {s.location}</span>
+              <span style={{ fontSize: 11, color: "#bbb", marginLeft: 8 }}>{s.club} · {s.location}</span>
             </div>
           )
         }
@@ -1121,8 +2408,8 @@ export default function App() {
           return (
             <div>
               <span style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 20, color: "#4ade80" }}>{comboPct}%</span>
-              <span style={{ fontSize: 11, color: "#666", marginLeft: 8 }}>{s.club} · {s.location}</span>
-              <div style={{ fontSize: 10, color: "#555", marginTop: 2 }}>
+              <span style={{ fontSize: 11, color: "#bbb", marginLeft: 8 }}>{s.club} · {s.location}</span>
+              <div style={{ fontSize: 10, color: "#bbb", marginTop: 2 }}>
                 PathR {pathRPct}% · SpinL {spinLPct}% · Combo {comboPct}%
               </div>
             </div>
@@ -1135,8 +2422,8 @@ export default function App() {
           return (
             <div>
               <span style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 20, color: GREEN_LIGHT }}>{putts}</span>
-              <span style={{ fontSize: 11, color: "#666", marginLeft: 4 }}>putts · {dist}ft · {avg}ft/putt</span>
-              {s.data.location && <div style={{ fontSize: 10, color: "#555", marginTop: 2 }}>{s.data.location}</div>}
+              <span style={{ fontSize: 11, color: "#bbb", marginLeft: 4 }}>putts · {dist}ft · {avg}ft/putt</span>
+              {s.data.location && <div style={{ fontSize: 10, color: "#bbb", marginTop: 2 }}>{s.data.location}</div>}
             </div>
           )
         }
@@ -1146,8 +2433,8 @@ export default function App() {
           return (
             <div>
               <span style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 20, color: pctColor(pct) }}>{made}/10</span>
-              <span style={{ fontSize: 11, color: "#666", marginLeft: 8 }}>{pct}%</span>
-              {s.data.location && <div style={{ fontSize: 10, color: "#555", marginTop: 2 }}>{s.data.location}</div>}
+              <span style={{ fontSize: 11, color: "#bbb", marginLeft: 8 }}>{pct}%</span>
+              {s.data.location && <div style={{ fontSize: 10, color: "#bbb", marginTop: 2 }}>{s.data.location}</div>}
             </div>
           )
         }
@@ -1159,7 +2446,106 @@ export default function App() {
           return (
             <div>
               <span style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 20, color: GREEN_LIGHT }}>{avg}</span>
-              <span style={{ fontSize: 11, color: "#666", marginLeft: 8 }}>{s.data.length} reps</span>
+              <span style={{ fontSize: 11, color: "#bbb", marginLeft: 8 }}>{s.data.length} reps</span>
+            </div>
+          )
+        }
+        case "driver_uprights": {
+          const total = s.data.filter(d => d.uprights !== null && d.shape !== null).length
+          const hits = s.data.filter(d => d.uprights === true).length
+          const hitPct = total > 0 ? Math.round((hits / total) * 100) : 0
+          const shapeCounts = {}
+          SHOT_SHAPES.forEach(sh => { shapeCounts[sh] = s.data.filter(d => d.shape === sh).length })
+          const topShape = Object.entries(shapeCounts).sort((a, b) => b[1] - a[1])[0]
+          return (
+            <div>
+              <span style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 20, color: pctColor(hitPct) }}>{hitPct}%</span>
+              <span style={{ fontSize: 11, color: "#bbb", marginLeft: 8 }}>{s.club} · {s.location}</span>
+              <div style={{ fontSize: 10, color: "#bbb", marginTop: 2 }}>
+                {hits}/{total} fairways · Top: {topShape[0]} ({topShape[1]})
+              </div>
+            </div>
+          )
+        }
+        case "start_line": {
+          const total = s.data.filter(d => d.gate !== null && d.lineRight !== null && d.break_dir !== null).length
+          const gates = s.data.filter(d => d.gate === true).length
+          const gatePct = total > 0 ? Math.round((gates / total) * 100) : 0
+          const lineRight = s.data.filter(d => d.lineRight === true).length
+          const linePct = total > 0 ? Math.round((lineRight / total) * 100) : 0
+          const breakSummary = PUTT_BREAKS.map(b => {
+            const putts = s.data.filter(d => d.break_dir === b)
+            const right = putts.filter(d => d.lineRight === true).length
+            const pct = putts.length > 0 ? Math.round((right / putts.length) * 100) : null
+            const short = b === "Left to Right" ? "L→R" : b === "Right to Left" ? "R→L" : "Str"
+            return pct !== null ? `${short} ${pct}%` : null
+          }).filter(Boolean).join(" · ")
+          return (
+            <div>
+              <span style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 20, color: pctColor(gatePct) }}>{gatePct}%</span>
+              <span style={{ fontSize: 11, color: "#bbb", marginLeft: 8 }}>gate · {linePct}% line</span>
+              <div style={{ fontSize: 10, color: "#bbb", marginTop: 2 }}>
+                {breakSummary}
+              </div>
+            </div>
+          )
+        }
+        case "lag": {
+          const putts = s.data.putts || []
+          const puttCounts = putts.filter(d => d.totalPutts !== "" && !isNaN(Number(d.totalPutts)))
+          const avgPutts = puttCounts.length > 0
+            ? (puttCounts.reduce((sum, d) => sum + Number(d.totalPutts), 0) / puttCounts.length).toFixed(1)
+            : "—"
+          const twoPuttOrLess = puttCounts.filter(d => Number(d.totalPutts) <= 2).length
+          const twoPuttPct = puttCounts.length > 0 ? Math.round((twoPuttOrLess / puttCounts.length) * 100) : 0
+          const logged = putts.filter(d => d.result !== null)
+          const shorts = logged.filter(d => d.result === "Short").length
+          const evens = logged.filter(d => d.result === "Even").length
+          const longs = logged.filter(d => d.result === "Long").length
+          return (
+            <div>
+              <span style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 20, color: pctColor(twoPuttPct) }}>{avgPutts}</span>
+              <span style={{ fontSize: 11, color: "#bbb", marginLeft: 8 }}>avg putts · {twoPuttPct}% ≤2</span>
+              <div style={{ fontSize: 10, color: "#bbb", marginTop: 2 }}>
+                S{shorts} · E{evens} · L{longs}
+              </div>
+            </div>
+          )
+        }
+        case "shape_randomizer": {
+          const shots = s.data.shots || []
+          const total = shots.filter(d => d.actualStart !== null && d.actualCurve !== null).length
+          const bothCount = shots.filter(d => d.actualStart === d.targetStart && d.actualCurve === d.targetCurve).length
+          const startCount = shots.filter(d => d.actualStart !== null && d.actualStart === d.targetStart).length
+          const curveCount = shots.filter(d => d.actualCurve !== null && d.actualCurve === d.targetCurve).length
+          const bothPct = total > 0 ? Math.round((bothCount / total) * 100) : 0
+          const startPct = total > 0 ? Math.round((startCount / total) * 100) : 0
+          const curvePct = total > 0 ? Math.round((curveCount / total) * 100) : 0
+          return (
+            <div>
+              <span style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 20, color: pctColor(bothPct) }}>{bothPct}%</span>
+              <span style={{ fontSize: 11, color: "#bbb", marginLeft: 8 }}>{shots.length} shots</span>
+              <div style={{ fontSize: 10, color: "#bbb", marginTop: 2 }}>
+                Both {bothPct}% · Start {startPct}% · Curve {curvePct}%
+              </div>
+            </div>
+          )
+        }
+        case "toe_heel_strike": {
+          const shots = s.data.shots || []
+          const total = shots.filter(d => d.result !== null).length
+          const hits = shots.filter(d => d.result === true).length
+          const hitPct = total > 0 ? Math.round((hits / total) * 100) : 0
+          const zoneStr = STRIKE_ZONES.map(z => {
+            const m = shots.filter(d => d.target === z && d.result !== null)
+            const h = m.filter(d => d.result === true).length
+            return `${z[0]}${z.includes(" ") ? z.split(" ")[1][0] : ""} ${m.length > 0 ? Math.round((h / m.length) * 100) : 0}%`
+          }).join(" · ")
+          return (
+            <div>
+              <span style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 20, color: pctColor(hitPct) }}>{hitPct}%</span>
+              <span style={{ fontSize: 11, color: "#bbb", marginLeft: 8 }}>{shots.length} shots</span>
+              <div style={{ fontSize: 10, color: "#bbb", marginTop: 2 }}>{zoneStr}</div>
             </div>
           )
         }
@@ -1171,17 +2557,17 @@ export default function App() {
       <div>
         <Header title={`${drill.name} History`} onBack={goHome} />
         {sessions.length === 0 ? (
-          <div style={{ textAlign: "center", padding: 40, color: "#444" }}>No sessions yet</div>
+          <div style={{ textAlign: "center", padding: 40, color: "#ccc" }}>No sessions yet</div>
         ) : (
           sessions.map(s => (
             <div key={s.id} style={CARD}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-                <div style={{ fontSize: 12, color: "#888" }}>
+                <div style={{ fontSize: 12, color: "#ddd" }}>
                   {formatDate(s.timestamp)} · {formatTime(s.timestamp)}
                 </div>
               </div>
               {sessionSummary(s)}
-              {s.notes && <div style={{ fontSize: 12, color: "#555", marginTop: 6, fontStyle: "italic" }}>{s.notes}</div>}
+              {s.notes && <div style={{ fontSize: 12, color: "#bbb", marginTop: 6, fontStyle: "italic" }}>{s.notes}</div>}
             </div>
           ))
         )}
@@ -1228,6 +2614,40 @@ export default function App() {
           const avg = graded.length > 0 ? (graded.reduce((s, r) => s + r.grade, 0) / graded.length).toFixed(1) : "—"
           return <span style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 18, color: GREEN_LIGHT }}>{avg}</span>
         }
+        case "driver_uprights": {
+          const total = last.data.filter(d => d.uprights !== null && d.shape !== null).length
+          const hits = last.data.filter(d => d.uprights === true).length
+          const pct = total > 0 ? Math.round((hits / total) * 100) : 0
+          return <span style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 18, color: pctColor(pct) }}>{pct}%</span>
+        }
+        case "start_line": {
+          const total = last.data.filter(d => d.gate !== null && d.lineRight !== null && d.break_dir !== null).length
+          const gates = last.data.filter(d => d.gate === true).length
+          const pct = total > 0 ? Math.round((gates / total) * 100) : 0
+          return <span style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 18, color: pctColor(pct) }}>{pct}%</span>
+        }
+        case "lag": {
+          const putts = last.data.putts || []
+          const puttCounts = putts.filter(d => d.totalPutts !== "" && !isNaN(Number(d.totalPutts)))
+          const avgPutts = puttCounts.length > 0
+            ? (puttCounts.reduce((sum, d) => sum + Number(d.totalPutts), 0) / puttCounts.length).toFixed(1)
+            : "—"
+          return <span style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 18, color: GREEN_LIGHT }}>{avgPutts} avg</span>
+        }
+        case "shape_randomizer": {
+          const shots = last.data.shots || []
+          const total = shots.filter(d => d.actualStart !== null && d.actualCurve !== null).length
+          const bothCount = shots.filter(d => d.actualStart === d.targetStart && d.actualCurve === d.targetCurve).length
+          const pct = total > 0 ? Math.round((bothCount / total) * 100) : 0
+          return <span style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 18, color: pctColor(pct) }}>{pct}%</span>
+        }
+        case "toe_heel_strike": {
+          const shots = last.data.shots || []
+          const total = shots.filter(d => d.result !== null).length
+          const hits = shots.filter(d => d.result === true).length
+          const pct = total > 0 ? Math.round((hits / total) * 100) : 0
+          return <span style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 18, color: pctColor(pct) }}>{pct}%</span>
+        }
         default: return null
       }
     }
@@ -1238,11 +2658,11 @@ export default function App() {
         {MC_API && (
           <div style={{ ...CARD, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
             <div>
-              <div style={{ fontSize: 12, color: "#999", fontWeight: 500 }}>Mission Control</div>
+              <div style={{ fontSize: 12, color: "#ccc", fontWeight: 500 }}>Mission Control</div>
               {syncResult && <div style={{ fontSize: 11, color: GREEN_LIGHT, marginTop: 2 }}>{syncResult}</div>}
             </div>
             <button onClick={syncAllToMC} disabled={syncing}
-              style={{ ...BTN_BASE, background: syncing ? "#333" : "#1c1c1c", color: syncing ? "#666" : GREEN_LIGHT, border: `1px solid ${syncing ? "#333" : GREEN}`, fontSize: 12, padding: "8px 14px" }}>
+              style={{ ...BTN_BASE, background: syncing ? "#333" : "#333", color: syncing ? "#999" : GREEN_LIGHT, border: `1px solid ${syncing ? "#333" : GREEN}`, fontSize: 12, padding: "8px 14px" }}>
               {syncing ? "Syncing..." : "Sync History"}
             </button>
           </div>
@@ -1256,7 +2676,7 @@ export default function App() {
                   <span style={{ fontSize: 20 }}>{t?.icon}</span>
                   <div>
                     <div style={{ fontFamily: BARLOW, fontWeight: 600, fontSize: 18, color: "#fff" }}>{t?.name}</div>
-                    <div style={{ fontSize: 11, color: "#666" }}>
+                    <div style={{ fontSize: 11, color: "#bbb" }}>
                       {drill.sessions.length} {drill.sessions.length === 1 ? "session" : "sessions"}
                     </div>
                   </div>
@@ -1269,7 +2689,7 @@ export default function App() {
                   ▶ Start Session
                 </button>
                 <button onClick={() => { setActiveDrill(drill); setView("history") }}
-                  style={{ ...BTN_BASE, flex: 1, background: "#1c1c1c", color: "#999", border: "1px solid #2a2a2a", fontSize: 14 }}>
+                  style={{ ...BTN_BASE, flex: 1, background: "#333", color: "#ccc", border: "1px solid #666", fontSize: 14 }}>
                   History
                 </button>
               </div>
@@ -1292,6 +2712,11 @@ export default function App() {
       case "putting_ladder": return <PuttingLadderSession />
       case "four_footer": return <FourFooterSession />
       case "strike_log": return <StrikeLogSession />
+      case "driver_uprights": return <DriverUprightsSession />
+      case "start_line": return <StartLineSession />
+      case "lag": return LagSession()
+      case "shape_randomizer": return <ShapeRandomizerSession />
+      case "toe_heel_strike": return <ToeHeelStrikeSession />
     }
   }
   return <HomeView />
