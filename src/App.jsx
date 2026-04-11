@@ -245,6 +245,15 @@ export default function App() {
     setSessionNotes(""); setCardStep(0); setShowSummary(false)
   }
 
+  // ── Save & Go Home: auto-save session data when leaving via Back ──
+  const saveAndGoHome = () => {
+    if (activeDrill && sessionData) {
+      saveSession()
+    } else {
+      goHome()
+    }
+  }
+
   // ── Start Session ──
   const startSession = (drill) => {
     setActiveDrill(drill)
@@ -526,7 +535,7 @@ export default function App() {
           <textarea value={sessionNotes} onChange={e => setSessionNotes(e.target.value)}
             placeholder="Thoughts on this session..."
             style={{ ...INP, minHeight: 80, resize: "vertical", marginBottom: 14 }} />
-          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14 }}>
+          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14, position: "fixed", bottom: 16, left: 16, right: 16, maxWidth: 398, margin: "0 auto", zIndex: 10, boxShadow: "0 -4px 20px rgba(0,0,0,0.6)" }}>
             Save Session
           </button>
         </div>
@@ -540,7 +549,7 @@ export default function App() {
             <span style={{ fontSize: 10, color: GREEN, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}>
               ⛳ Golf Practice
             </span>
-            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
+            <button onClick={saveAndGoHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
               ← Back
             </button>
           </div>
@@ -702,7 +711,7 @@ export default function App() {
           <textarea value={sessionNotes} onChange={e => setSessionNotes(e.target.value)}
             placeholder="Thoughts on this session..."
             style={{ ...INP, minHeight: 80, resize: "vertical", marginBottom: 14 }} />
-          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14 }}>
+          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14, position: "fixed", bottom: 16, left: 16, right: 16, maxWidth: 398, margin: "0 auto", zIndex: 10, boxShadow: "0 -4px 20px rgba(0,0,0,0.6)" }}>
             Save Session
           </button>
         </div>
@@ -716,7 +725,7 @@ export default function App() {
             <span style={{ fontSize: 10, color: GREEN, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}>
               ⛳ Golf Practice
             </span>
-            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
+            <button onClick={saveAndGoHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
               ← Back
             </button>
           </div>
@@ -864,7 +873,7 @@ export default function App() {
           <textarea value={sessionNotes} onChange={e => setSessionNotes(e.target.value)}
             placeholder="Thoughts on this session..."
             style={{ ...INP, minHeight: 80, resize: "vertical", marginBottom: 14 }} />
-          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14 }}>
+          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14, position: "fixed", bottom: 16, left: 16, right: 16, maxWidth: 398, margin: "0 auto", zIndex: 10, boxShadow: "0 -4px 20px rgba(0,0,0,0.6)" }}>
             Save Session
           </button>
         </div>
@@ -880,7 +889,7 @@ export default function App() {
             <span style={{ fontSize: 10, color: GREEN, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}>
               ⛳ Golf Practice
             </span>
-            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
+            <button onClick={saveAndGoHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
               ← Back
             </button>
           </div>
@@ -1003,7 +1012,7 @@ export default function App() {
     if (data.count === null) {
       return (
         <div>
-          <Header title="Shape Randomizer" onBack={goHome} />
+          <Header title="Shape Randomizer" onBack={saveAndGoHome} />
           <div style={{ textAlign: "center", padding: "40px 0" }}>
             <div style={{ fontFamily: BARLOW, fontSize: 22, fontWeight: 700, color: "#fff", marginBottom: 24 }}>
               How many shots?
@@ -1128,7 +1137,7 @@ export default function App() {
           <textarea value={sessionNotes} onChange={e => setSessionNotes(e.target.value)}
             placeholder="Thoughts on this session..."
             style={{ ...INP, minHeight: 80, resize: "vertical", marginBottom: 14 }} />
-          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14 }}>
+          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14, position: "fixed", bottom: 16, left: 16, right: 16, maxWidth: 398, margin: "0 auto", zIndex: 10, boxShadow: "0 -4px 20px rgba(0,0,0,0.6)" }}>
             Save Session
           </button>
         </div>
@@ -1144,7 +1153,7 @@ export default function App() {
             <span style={{ fontSize: 10, color: GREEN, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}>
               ⛳ Golf Practice
             </span>
-            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
+            <button onClick={saveAndGoHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
               ← Back
             </button>
           </div>
@@ -1263,7 +1272,7 @@ export default function App() {
     if (data.count === null) {
       return (
         <div>
-          <Header title="Toe/Heel Strike" onBack={goHome} />
+          <Header title="Toe/Heel Strike" onBack={saveAndGoHome} />
           <div style={{ textAlign: "center", padding: "40px 0" }}>
             <div style={{ fontFamily: BARLOW, fontSize: 22, fontWeight: 700, color: "#fff", marginBottom: 24 }}>
               How many shots?
@@ -1348,7 +1357,7 @@ export default function App() {
           <textarea value={sessionNotes} onChange={e => setSessionNotes(e.target.value)}
             placeholder="Thoughts on this session..."
             style={{ ...INP, minHeight: 80, resize: "vertical", marginBottom: 14 }} />
-          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14 }}>
+          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14, position: "fixed", bottom: 16, left: 16, right: 16, maxWidth: 398, margin: "0 auto", zIndex: 10, boxShadow: "0 -4px 20px rgba(0,0,0,0.6)" }}>
             Save Session
           </button>
         </div>
@@ -1362,7 +1371,7 @@ export default function App() {
             <span style={{ fontSize: 10, color: GREEN, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}>
               ⛳ Golf Practice
             </span>
-            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
+            <button onClick={saveAndGoHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
               ← Back
             </button>
           </div>
@@ -1441,7 +1450,7 @@ export default function App() {
 
     return (
       <div>
-        <Header title={activeDrill.name} onBack={goHome} />
+        <Header title={activeDrill.name} onBack={saveAndGoHome} />
         <label style={LBL}>Location</label>
         <input type="text" value={data.location} onChange={e => update("location", e.target.value)}
           placeholder="e.g. Westwood CC, back green"
@@ -1474,7 +1483,7 @@ export default function App() {
           placeholder="Green speed, break tendencies, anything notable..."
           style={{ ...INP, minHeight: 80, resize: "vertical", marginBottom: 14 }} />
         <button onClick={saveSession}
-          style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14 }}>
+          style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14, position: "fixed", bottom: 16, left: 16, right: 16, maxWidth: 398, margin: "0 auto", zIndex: 10, boxShadow: "0 -4px 20px rgba(0,0,0,0.6)" }}>
           Save Session
         </button>
       </div>
@@ -1493,7 +1502,7 @@ export default function App() {
 
     return (
       <div>
-        <Header title={activeDrill.name} onBack={goHome} />
+        <Header title={activeDrill.name} onBack={saveAndGoHome} />
         <label style={LBL}>Location</label>
         <input type="text" value={data.location} onChange={e => update("location", e.target.value)}
           placeholder="e.g. Home putting mat"
@@ -1529,7 +1538,7 @@ export default function App() {
           placeholder="Stroke thoughts, tendencies..."
           style={{ ...INP, minHeight: 80, resize: "vertical", marginBottom: 14 }} />
         <button onClick={saveSession}
-          style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14 }}>
+          style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14, position: "fixed", bottom: 16, left: 16, right: 16, maxWidth: 398, margin: "0 auto", zIndex: 10, boxShadow: "0 -4px 20px rgba(0,0,0,0.6)" }}>
           Save Session
         </button>
       </div>
@@ -1556,7 +1565,7 @@ export default function App() {
 
     return (
       <div>
-        <Header title={activeDrill.name} onBack={goHome} />
+        <Header title={activeDrill.name} onBack={saveAndGoHome} />
         <button onClick={addRep}
           style={{
             ...BTN_BASE, width: "100%", background: "transparent", color: GREEN,
@@ -1695,7 +1704,7 @@ export default function App() {
           <textarea value={sessionNotes} onChange={e => setSessionNotes(e.target.value)}
             placeholder="Thoughts on this session..."
             style={{ ...INP, minHeight: 80, resize: "vertical", marginBottom: 14 }} />
-          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14 }}>
+          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14, position: "fixed", bottom: 16, left: 16, right: 16, maxWidth: 398, margin: "0 auto", zIndex: 10, boxShadow: "0 -4px 20px rgba(0,0,0,0.6)" }}>
             Save Session
           </button>
         </div>
@@ -1711,7 +1720,7 @@ export default function App() {
             <span style={{ fontSize: 10, color: GREEN, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}>
               ⛳ Golf Practice
             </span>
-            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
+            <button onClick={saveAndGoHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
               ← Back
             </button>
           </div>
@@ -1888,7 +1897,7 @@ export default function App() {
           <textarea value={sessionNotes} onChange={e => setSessionNotes(e.target.value)}
             placeholder="Thoughts on this session..."
             style={{ ...INP, minHeight: 80, resize: "vertical", marginBottom: 14 }} />
-          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14 }}>
+          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14, position: "fixed", bottom: 16, left: 16, right: 16, maxWidth: 398, margin: "0 auto", zIndex: 10, boxShadow: "0 -4px 20px rgba(0,0,0,0.6)" }}>
             Save Session
           </button>
         </div>
@@ -1904,7 +1913,7 @@ export default function App() {
             <span style={{ fontSize: 10, color: GREEN, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}>
               ⛳ Golf Practice
             </span>
-            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
+            <button onClick={saveAndGoHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
               ← Back
             </button>
           </div>
@@ -2031,7 +2040,7 @@ export default function App() {
     if (data.count === null) {
       return (
         <div>
-          <Header title="Lag" onBack={goHome} />
+          <Header title="Lag" onBack={saveAndGoHome} />
           <div style={{ textAlign: "center", padding: "40px 0 20px" }}>
             <div style={{ fontSize: 14, color: "#ddd", marginBottom: 20 }}>How many putts?</div>
             <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
@@ -2209,7 +2218,7 @@ export default function App() {
           <textarea value={sessionNotes} onChange={e => setSessionNotes(e.target.value)}
             placeholder="Thoughts on this session..."
             style={{ ...INP, minHeight: 80, resize: "vertical", marginBottom: 14 }} />
-          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14 }}>
+          <button onClick={saveSession} style={{ ...BTN_BASE, width: "100%", background: GREEN, color: "#fff", fontSize: 16, padding: 14, position: "fixed", bottom: 16, left: 16, right: 16, maxWidth: 398, margin: "0 auto", zIndex: 10, boxShadow: "0 -4px 20px rgba(0,0,0,0.6)" }}>
             Save Session
           </button>
         </div>
@@ -2225,7 +2234,7 @@ export default function App() {
             <span style={{ fontSize: 10, color: GREEN, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}>
               ⛳ Golf Practice
             </span>
-            <button onClick={goHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
+            <button onClick={saveAndGoHome} style={{ ...BTN_BASE, background: "none", color: "#ddd", fontSize: 13, padding: "4px 8px" }}>
               ← Back
             </button>
           </div>
