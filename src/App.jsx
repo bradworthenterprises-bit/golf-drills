@@ -82,6 +82,7 @@ function syncToMC(drill, sessionObj) {
       category: TEMPLATE_TO_CATEGORY[drill.template],
       drill: TEMPLATES[drill.template].name,
       duration_min: null,
+      score: computeScore(drill.template, sessionObj.data),
       result_json: sessionObj.data,
       notes: sessionObj.notes || null,
       source: "drill_app",
@@ -115,6 +116,69 @@ function calcPoints(missYards, targetYards) {
   if (pct < 9) return 2
   if (pct < 10) return 1
   return 0
+}
+
+// ── Compute high-level score per drill (native scale per drill) ──
+function computeScore(template, data) {
+  if (!data) return null
+  try {
+    switch (template) {
+      case "distance_matrix":
+        return data.reduce((sum, d) =>
+          d.miss !== "" && d.miss !== null ? sum + calcPoints(d.miss, d.distance) : sum, 0)
+      case "arc_depth": {
+        const total = data.length
+        return total ? Math.round((data.filter(d => d.result === true).length / total) * 100) : 0
+      }
+      case "shot_shaping": {
+        const logged = data.filter(d => d.path !== null && d.spin !== null)
+        const combos = data.filter(d => d.path === "R" && d.spin === "L").length
+        return logged.length ? Math.round((combos / logged.length) * 100) : 0
+      }
+      case "putting_ladder": {
+        const p = Number(data.putts) || 0, d = Number(data.distance) || 0
+        return p > 0 ? Number((d / p).toFixed(1)) : 0
+      }
+      case "four_footer": {
+        const made = data.made
+        return made !== "" && made !== null ? Number(made) * 10 : 0
+      }
+      case "strike_log": {
+        const graded = data.filter(r => r.grade !== null)
+        return graded.length ? Number((graded.reduce((s, r) => s + r.grade, 0) / graded.length).toFixed(2)) : 0
+      }
+      case "driver_uprights": {
+        const logged = data.filter(d => d.uprights !== null)
+        const hits = data.filter(d => d.uprights === true).length
+        return logged.length ? Math.round((hits / logged.length) * 100) : 0
+      }
+      case "start_line": {
+        const logged = data.filter(d => d.gate !== null)
+        const gates = data.filter(d => d.gate === true).length
+        return logged.length ? Math.round((gates / logged.length) * 100) : 0
+      }
+      case "lag": {
+        const putts = (data.putts || []).filter(d => d.totalPutts !== "" && !isNaN(Number(d.totalPutts)))
+        const twoOrLess = putts.filter(d => Number(d.totalPutts) <= 2).length
+        return putts.length ? Math.round((twoOrLess / putts.length) * 100) : 0
+      }
+      case "shape_randomizer": {
+        const shots = data.shots || []
+        const logged = shots.filter(d => d.actualStart !== null && d.actualCurve !== null)
+        const both = shots.filter(d => d.actualStart === d.targetStart && d.actualCurve === d.targetCurve).length
+        return logged.length ? Math.round((both / logged.length) * 100) : 0
+      }
+      case "toe_heel_strike": {
+        const shots = data.shots || []
+        const logged = shots.filter(d => d.result !== null)
+        const hits = shots.filter(d => d.result === true).length
+        return logged.length ? Math.round((hits / logged.length) * 100) : 0
+      }
+      default: return null
+    }
+  } catch {
+    return null
+  }
 }
 
 function scoreColor(pts) {
@@ -178,22 +242,49 @@ export default function App() {
   const [showSummary, setShowSummary] = useState(false)
   const [arcClub, setArcClub] = useState("PW")
   const [arcLocation, setArcLocation] = useState("Basement")
+  const [expandedSessionId, setExpandedSessionId] = useState(null)
 
   // ── Wake Lock: keep screen on ──
   useEffect(() => {
     let wakeLock = null
+    let mounted = true
+
     const requestWakeLock = async () => {
+      if (!mounted) return
+      if (!('wakeLock' in navigator)) {
+        console.warn('[wake-lock] API not supported on this browser')
+        return
+      }
+      if (document.visibilityState !== 'visible') return
       try {
-        if ('wakeLock' in navigator) {
-          wakeLock = await navigator.wakeLock.request('screen')
-        }
-      } catch {}
+        wakeLock = await navigator.wakeLock.request('screen')
+        console.log('[wake-lock] acquired')
+        wakeLock.addEventListener('release', () => {
+          console.log('[wake-lock] released by system')
+          // Re-request if we're still mounted and visible (iOS releases on orientation/visibility change)
+          if (mounted && document.visibilityState === 'visible') {
+            setTimeout(requestWakeLock, 500)
+          }
+        })
+      } catch (err) {
+        console.warn('[wake-lock] request failed:', err.message)
+      }
     }
+
     requestWakeLock()
-    const onVisChange = () => { if (document.visibilityState === 'visible') requestWakeLock() }
-    document.addEventListener('visibilitychange', onVisChange)
+
+    const onActive = () => {
+      if (document.visibilityState === 'visible') requestWakeLock()
+    }
+    document.addEventListener('visibilitychange', onActive)
+    window.addEventListener('focus', onActive)
+    window.addEventListener('pageshow', onActive)
+
     return () => {
-      document.removeEventListener('visibilitychange', onVisChange)
+      mounted = false
+      document.removeEventListener('visibilitychange', onActive)
+      window.removeEventListener('focus', onActive)
+      window.removeEventListener('pageshow', onActive)
       if (wakeLock) wakeLock.release().catch(() => {})
     }
   }, [])
@@ -387,6 +478,7 @@ export default function App() {
               category: TEMPLATE_TO_CATEGORY[drill.template],
               drill: TEMPLATES[drill.template].name,
               duration_min: null,
+              score: computeScore(drill.template, session.data),
               result_json: session.data,
               notes: session.notes || null,
               source: "drill_app",
@@ -2562,23 +2654,229 @@ export default function App() {
       }
     }
 
+    const sessionDetail = (s) => {
+      const shotCard = { ...CARD, padding: 8, marginBottom: 0, textAlign: "center" }
+      const shotNum = { fontSize: 11, color: "#ddd", marginBottom: 2 }
+      const shotLine = { fontSize: 11 }
+      switch (drill.template) {
+        case "distance_matrix":
+          return (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+              {s.data.map((d, i) => {
+                const pts = d.miss !== "" ? calcPoints(d.miss, d.distance) : null
+                return (
+                  <div key={i} style={{ ...shotCard, width: "calc(25% - 5px)" }}>
+                    <div style={shotNum}>#{i + 1} · {d.distance}y</div>
+                    <div style={shotLine}>
+                      {d.miss !== "" ? (
+                        <>
+                          <span style={{ color: pts !== null ? scoreColor(pts) : "#ccc" }}>{d.miss}{d.dir}</span>
+                          {pts !== null && <span style={{ color: "#999", marginLeft: 4 }}>({pts})</span>}
+                        </>
+                      ) : <span style={{ color: "#888" }}>—</span>}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )
+        case "arc_depth":
+          return (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+              {s.data.map((d, i) => (
+                <div key={i} style={{ ...shotCard, width: "calc(25% - 5px)" }}>
+                  <div style={shotNum}>#{i + 1}</div>
+                  <div style={{ fontSize: 10, color: "#aaa" }}>{d.cue}</div>
+                  <div style={{ fontSize: 13, color: d.result === true ? "#4ade80" : d.result === false ? "#ef4444" : "#666" }}>
+                    {d.result === true ? "✓" : d.result === false ? "✗" : "—"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        case "shot_shaping":
+          return (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+              {s.data.map((d, i) => {
+                const combo = d.path === "R" && d.spin === "L"
+                const logged = d.path !== null && d.spin !== null
+                return (
+                  <div key={i} style={{ ...shotCard, width: "calc(25% - 5px)" }}>
+                    <div style={shotNum}>#{i + 1}</div>
+                    {logged ? (
+                      <>
+                        <div style={shotLine}>
+                          <span style={{ color: "#60a5fa" }}>{d.path}</span>
+                          {" · "}
+                          <span style={{ color: "#f472b6" }}>{d.spin}</span>
+                        </div>
+                        {combo && <div style={{ fontSize: 9, color: "#4ade80" }}>✓</div>}
+                      </>
+                    ) : <div style={{ fontSize: 11, color: "#ccc" }}>—</div>}
+                  </div>
+                )
+              })}
+            </div>
+          )
+        case "driver_uprights":
+          return (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+              {s.data.map((d, i) => {
+                const logged = d.uprights !== null && d.shape !== null
+                return (
+                  <div key={i} style={{ ...shotCard, width: "calc(25% - 5px)" }}>
+                    <div style={shotNum}>#{i + 1}</div>
+                    {logged ? (
+                      <>
+                        <div style={{ fontSize: 11, color: d.uprights ? "#4ade80" : "#ef4444" }}>{d.uprights ? "✓" : "✗"}</div>
+                        <div style={{ fontSize: 9, color: "#aaa" }}>{d.shape}</div>
+                      </>
+                    ) : <div style={{ fontSize: 11, color: "#ccc" }}>—</div>}
+                  </div>
+                )
+              })}
+            </div>
+          )
+        case "start_line":
+          return (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+              {s.data.map((d, i) => {
+                const logged = d.gate !== null
+                return (
+                  <div key={i} style={{ ...shotCard, width: "calc(25% - 5px)" }}>
+                    <div style={shotNum}>#{i + 1}</div>
+                    {logged ? (
+                      <>
+                        <div style={{ fontSize: 11, color: d.gate ? "#4ade80" : "#ef4444" }}>{d.gate ? "Gate ✓" : "Gate ✗"}</div>
+                        {d.lineRight !== null && <div style={{ fontSize: 9, color: "#aaa" }}>Line {d.lineRight ? "R" : "L"}</div>}
+                        {d.break_dir && <div style={{ fontSize: 9, color: "#888" }}>{d.break_dir === "Left to Right" ? "L→R" : d.break_dir === "Right to Left" ? "R→L" : "Str"}</div>}
+                      </>
+                    ) : <div style={{ fontSize: 11, color: "#ccc" }}>—</div>}
+                  </div>
+                )
+              })}
+            </div>
+          )
+        case "shape_randomizer": {
+          const shots = s.data.shots || []
+          const bothMatch = (d) => d.actualStart === d.targetStart && d.actualCurve === d.targetCurve
+          const startMatch = (d) => d.actualStart === d.targetStart
+          const curveMatch = (d) => d.actualCurve === d.targetCurve
+          const logged = (d) => d.actualStart !== null && d.actualCurve !== null
+          return (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+              {shots.map((d, i) => (
+                <div key={i} style={{ ...shotCard, width: "calc(25% - 5px)" }}>
+                  <div style={shotNum}>#{i + 1}</div>
+                  {logged(d) ? (
+                    <>
+                      <div style={{ fontSize: 9, color: "#aaa" }}>{d.targetStart[0]}→{d.targetCurve[0]}</div>
+                      <div style={shotLine}>
+                        <span style={{ color: startMatch(d) ? "#60a5fa" : "#ef4444" }}>{d.actualStart[0]}</span>
+                        {"→"}
+                        <span style={{ color: curveMatch(d) ? "#f472b6" : "#ef4444" }}>{d.actualCurve[0]}</span>
+                      </div>
+                      {bothMatch(d) && <div style={{ fontSize: 9, color: "#4ade80" }}>✓</div>}
+                    </>
+                  ) : <div style={{ fontSize: 11, color: "#ccc" }}>—</div>}
+                </div>
+              ))}
+            </div>
+          )
+        }
+        case "toe_heel_strike": {
+          const shots = s.data.shots || []
+          return (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+              {shots.map((d, i) => (
+                <div key={i} style={{ ...shotCard, width: "calc(25% - 5px)" }}>
+                  <div style={shotNum}>#{i + 1}</div>
+                  <div style={{ fontSize: 9, color: "#aaa" }}>{d.target}</div>
+                  {d.result !== null ? (
+                    <div style={{ fontSize: 13, color: d.result ? "#4ade80" : "#ef4444" }}>{d.result ? "✓" : "✗"}</div>
+                  ) : <div style={{ fontSize: 11, color: "#ccc" }}>—</div>}
+                </div>
+              ))}
+            </div>
+          )
+        }
+        case "strike_log":
+          return (
+            <div style={{ marginTop: 10 }}>
+              {s.data.map((r, i) => (
+                <div key={i} style={{ ...CARD, padding: 8, marginBottom: 6, display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ fontSize: 12, color: "#ddd", width: 24 }}>#{i + 1}</div>
+                  <div style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 18, color: GREEN_LIGHT, width: 28, textAlign: "center" }}>{r.grade ?? "—"}</div>
+                  {r.location && <div style={{ fontSize: 10, color: "#aaa" }}>{r.location}</div>}
+                  {r.note && <div style={{ fontSize: 11, color: "#ccc", fontStyle: "italic", flex: 1 }}>{r.note}</div>}
+                </div>
+              ))}
+            </div>
+          )
+        case "lag": {
+          const putts = s.data.putts || []
+          return (
+            <div style={{ marginTop: 10 }}>
+              {putts.map((p, i) => (
+                <div key={i} style={{ ...CARD, padding: 8, marginBottom: 6, display: "flex", alignItems: "center", gap: 10, fontSize: 11 }}>
+                  <div style={{ color: "#ddd", width: 24 }}>#{i + 1}</div>
+                  <div style={{ fontFamily: BARLOW, fontWeight: 700, fontSize: 16, color: GREEN_LIGHT, width: 24, textAlign: "center" }}>{p.totalPutts ?? "—"}</div>
+                  <div style={{ color: "#bbb" }}>{p.firstDist}ft</div>
+                  {p.slope && <div style={{ color: "#888" }}>{p.slope}</div>}
+                  {p.break_dir && <div style={{ color: "#888" }}>{p.break_dir === "Left to Right" ? "L→R" : p.break_dir === "Right to Left" ? "R→L" : "Str"}</div>}
+                  {p.result && <div style={{ color: p.result === "Even" ? "#4ade80" : p.result === "Short" ? "#facc15" : "#f472b6" }}>{p.result}</div>}
+                </div>
+              ))}
+            </div>
+          )
+        }
+        case "putting_ladder": {
+          const putts = Number(s.data.putts) || 0
+          const dist = Number(s.data.distance) || 0
+          return (
+            <div style={{ marginTop: 10, ...CARD, padding: 12 }}>
+              <div style={{ fontSize: 12, color: "#ddd" }}>Total Putts: <span style={{ color: "#fff", fontWeight: 600 }}>{putts}</span></div>
+              <div style={{ fontSize: 12, color: "#ddd", marginTop: 4 }}>Total Distance: <span style={{ color: "#fff", fontWeight: 600 }}>{dist} ft</span></div>
+              {putts > 0 && <div style={{ fontSize: 12, color: "#ddd", marginTop: 4 }}>Avg: <span style={{ color: "#fff", fontWeight: 600 }}>{(dist / putts).toFixed(1)} ft/putt</span></div>}
+              {s.data.location && <div style={{ fontSize: 12, color: "#ddd", marginTop: 4 }}>Location: <span style={{ color: "#fff", fontWeight: 600 }}>{s.data.location}</span></div>}
+            </div>
+          )
+        }
+        case "four_footer": {
+          return (
+            <div style={{ marginTop: 10, ...CARD, padding: 12 }}>
+              <div style={{ fontSize: 12, color: "#ddd" }}>Made: <span style={{ color: "#fff", fontWeight: 600 }}>{s.data.made}/10</span></div>
+              {s.data.location && <div style={{ fontSize: 12, color: "#ddd", marginTop: 4 }}>Location: <span style={{ color: "#fff", fontWeight: 600 }}>{s.data.location}</span></div>}
+            </div>
+          )
+        }
+        default: return null
+      }
+    }
+
     return (
       <div>
         <Header title={`${drill.name} History`} onBack={goHome} />
         {sessions.length === 0 ? (
           <div style={{ textAlign: "center", padding: 40, color: "#ccc" }}>No sessions yet</div>
         ) : (
-          sessions.map(s => (
-            <div key={s.id} style={CARD}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-                <div style={{ fontSize: 12, color: "#ddd" }}>
-                  {formatDate(s.timestamp)} · {formatTime(s.timestamp)}
+          sessions.map(s => {
+            const expanded = expandedSessionId === s.id
+            return (
+              <div key={s.id} style={{ ...CARD, cursor: "pointer" }}
+                onClick={() => setExpandedSessionId(expanded ? null : s.id)}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                  <div style={{ fontSize: 12, color: "#ddd" }}>
+                    {formatDate(s.timestamp)} · {formatTime(s.timestamp)}
+                  </div>
+                  <div style={{ fontSize: 14, color: "#888" }}>{expanded ? "▲" : "▼"}</div>
                 </div>
+                {sessionSummary(s)}
+                {s.notes && <div style={{ fontSize: 12, color: "#bbb", marginTop: 6, fontStyle: "italic" }}>{s.notes}</div>}
+                {expanded && sessionDetail(s)}
               </div>
-              {sessionSummary(s)}
-              {s.notes && <div style={{ fontSize: 12, color: "#bbb", marginTop: 6, fontStyle: "italic" }}>{s.notes}</div>}
-            </div>
-          ))
+            )
+          })
         )}
       </div>
     )
@@ -2676,32 +2974,47 @@ export default function App() {
             </button>
           </div>
         )}
-        {drills.map(drill => {
-          const t = TEMPLATES[drill.template]
+        {["Wedges", "Full swing", "Putting"].map(category => {
+          const categoryDrills = drills.filter(d => TEMPLATE_TO_CATEGORY[d.template] === category)
+          if (categoryDrills.length === 0) return null
           return (
-            <div key={drill.id} style={CARD}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 20 }}>{t?.icon}</span>
-                  <div>
-                    <div style={{ fontFamily: BARLOW, fontWeight: 600, fontSize: 18, color: "#fff" }}>{t?.name}</div>
-                    <div style={{ fontSize: 11, color: "#bbb" }}>
-                      {drill.sessions.length} {drill.sessions.length === 1 ? "session" : "sessions"}
+            <div key={category} style={{ marginBottom: 20 }}>
+              <div style={{
+                fontFamily: BARLOW, fontWeight: 600, fontSize: 13, color: GREEN,
+                textTransform: "uppercase", letterSpacing: "0.15em",
+                marginTop: 16, marginBottom: 8, paddingLeft: 2
+              }}>
+                {category}
+              </div>
+              {categoryDrills.map(drill => {
+                const t = TEMPLATES[drill.template]
+                return (
+                  <div key={drill.id} style={CARD}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 20 }}>{t?.icon}</span>
+                        <div>
+                          <div style={{ fontFamily: BARLOW, fontWeight: 600, fontSize: 18, color: "#fff" }}>{t?.name}</div>
+                          <div style={{ fontSize: 11, color: "#bbb" }}>
+                            {drill.sessions.length} {drill.sessions.length === 1 ? "session" : "sessions"}
+                          </div>
+                        </div>
+                      </div>
+                      {drillStat(drill)}
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => startSession(drill)}
+                        style={{ ...BTN_BASE, flex: 1, background: GREEN, color: "#fff", fontSize: 14 }}>
+                        ▶ Start Session
+                      </button>
+                      <button onClick={() => { setActiveDrill(drill); setView("history") }}
+                        style={{ ...BTN_BASE, flex: 1, background: "#333", color: "#ccc", border: "1px solid #666", fontSize: 14 }}>
+                        History
+                      </button>
                     </div>
                   </div>
-                </div>
-                {drillStat(drill)}
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => startSession(drill)}
-                  style={{ ...BTN_BASE, flex: 1, background: GREEN, color: "#fff", fontSize: 14 }}>
-                  ▶ Start Session
-                </button>
-                <button onClick={() => { setActiveDrill(drill); setView("history") }}
-                  style={{ ...BTN_BASE, flex: 1, background: "#333", color: "#ccc", border: "1px solid #666", fontSize: 14 }}>
-                  History
-                </button>
-              </div>
+                )
+              })}
             </div>
           )
         })}
@@ -2712,21 +3025,21 @@ export default function App() {
   // ──────────────────────────────
   // RENDER
   // ──────────────────────────────
-  if (view === "history") return <HistoryView />
+  if (view === "history") return HistoryView()
   if (view === "session" && activeDrill) {
     switch (activeDrill.template) {
-      case "distance_matrix": return <DistanceMatrixSession />
-      case "arc_depth": return <ArcDepthSession />
-      case "shot_shaping": return <ShotShapingSession />
-      case "putting_ladder": return <PuttingLadderSession />
-      case "four_footer": return <FourFooterSession />
-      case "strike_log": return <StrikeLogSession />
-      case "driver_uprights": return <DriverUprightsSession />
-      case "start_line": return <StartLineSession />
+      case "distance_matrix": return DistanceMatrixSession()
+      case "arc_depth": return ArcDepthSession()
+      case "shot_shaping": return ShotShapingSession()
+      case "putting_ladder": return PuttingLadderSession()
+      case "four_footer": return FourFooterSession()
+      case "strike_log": return StrikeLogSession()
+      case "driver_uprights": return DriverUprightsSession()
+      case "start_line": return StartLineSession()
       case "lag": return LagSession()
-      case "shape_randomizer": return <ShapeRandomizerSession />
-      case "toe_heel_strike": return <ToeHeelStrikeSession />
+      case "shape_randomizer": return ShapeRandomizerSession()
+      case "toe_heel_strike": return ToeHeelStrikeSession()
     }
   }
-  return <HomeView />
+  return HomeView()
 }
